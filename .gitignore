@@ -1,0 +1,6 @@
+# local data
+data/
+package-lock.json
+
+# macOS
+.DS_Store
