@@ -2,6 +2,9 @@
 /data/
 build/
 package-lock.json
+.env
+logs/
+run/
 
 # macOS
 .DS_Store

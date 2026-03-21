@@ -13,14 +13,16 @@ import (
 )
 
 type Handler struct {
-	app *app.App
-	mux *http.ServeMux
+	app         *app.App
+	mux         *http.ServeMux
+	corsOrigins []string
 }
 
-func NewHandler(application *app.App) http.Handler {
+func NewHandler(application *app.App, corsOrigin string) http.Handler {
 	handler := &Handler{
-		app: application,
-		mux: http.NewServeMux(),
+		app:         application,
+		mux:         http.NewServeMux(),
+		corsOrigins: parseCORSOrigins(corsOrigin),
 	}
 	handler.routes()
 	return handler.withMiddleware(handler.mux)
@@ -42,7 +44,10 @@ func (h *Handler) routes() {
 
 func (h *Handler) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if origin := h.allowedOrigin(r.Header.Get("Origin")); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 
@@ -53,6 +58,44 @@ func (h *Handler) withMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+func parseCORSOrigins(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return []string{"*"}
+	}
+
+	parts := strings.Split(value, ",")
+	origins := make([]string, 0, len(parts))
+	for _, part := range parts {
+		origin := strings.TrimSpace(part)
+		if origin == "" {
+			continue
+		}
+		origins = append(origins, origin)
+	}
+	if len(origins) == 0 {
+		return []string{"*"}
+	}
+	return origins
+}
+
+func (h *Handler) allowedOrigin(requestOrigin string) string {
+	if len(h.corsOrigins) == 0 {
+		return "*"
+	}
+	for _, allowed := range h.corsOrigins {
+		if allowed == "*" {
+			return "*"
+		}
+		if requestOrigin != "" && requestOrigin == allowed {
+			return allowed
+		}
+	}
+	if requestOrigin == "" && len(h.corsOrigins) == 1 {
+		return h.corsOrigins[0]
+	}
+	return ""
 }
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {

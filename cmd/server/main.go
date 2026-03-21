@@ -31,7 +31,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddress,
-		Handler:           api.NewHandler(application),
+		Handler:           api.NewHandler(application, cfg.CORSOrigin),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

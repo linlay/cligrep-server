@@ -1,193 +1,111 @@
 # cligrep-server
 
-Go `1.26` backend for CLI Grep.
+## 1. 项目简介
+`cligrep-server` 是 CLI Grep 的 Go 后端，负责提供 CLI 列表检索、详情查询、评论与收藏持久化、Mock 登录，以及基于 Docker 的受限命令执行能力。
 
-## Deployment Model
+该服务按“宿主机原生进程运行”部署，不使用 `docker compose` 编排自身；前端容器会通过反向代理访问本服务。
 
-`cligrep-server` is deployed as a native Go application on a Linux host.
-The backend itself is not containerized and does not require `docker-compose.yml`.
-
-Docker is still a runtime prerequisite because the application shells out to host Docker
-to execute BusyBox and Python sandboxes.
-
-Docker network creation is not part of the backend deployment path for this phase.
-
-## Host Prerequisites
-
-- Linux host with Docker Engine and Docker CLI available in `PATH`
-- Go `1.26` toolchain if you build from source
-- Access to pull sandbox images or pre-load them on the host
-
-Pull the required sandbox images before running the service:
+## 2. 快速开始
+### 前置要求
+- Go 1.26
+- Docker Engine 与 Docker CLI 可用
+- 本机已预拉取运行沙箱所需镜像：
 
 ```bash
 docker pull busybox:1.36.1
 docker pull python:3.12-slim
 ```
 
-## Build
-
-Build the Linux binary from the project root:
-
+### 本地启动
 ```bash
-mkdir -p build
-go build -o build/cligrep-server ./cmd/server
+cp .env.example .env
+./build.sh
+./start.sh
 ```
 
-If you need a Linux binary from another OS, use a cross-build such as:
+服务默认监听 `http://127.0.0.1:8080`，数据库默认写入仓库内 `data/cligrep.db`。
 
+### 停止服务
 ```bash
-GOOS=linux GOARCH=amd64 go build -o build/cligrep-server ./cmd/server
+./stop.sh
 ```
 
-## Recommended Runtime Layout
-
-Example target layout on a Linux server:
-
-```text
-/opt/cligrep-server/
-  bin/cligrep-server
-  data/cligrep.db
-  cligrep-server.env
+### 测试
+```bash
+go test ./...
 ```
 
-Create the directories:
+## 3. 配置说明
+- 所有运行配置从 `.env.example` 复制到 `.env`。
+- `.env` 不提交仓库，由 `start.sh` 在启动时自动加载。
+- 配置项如下：
 
-```bash
-sudo mkdir -p /opt/cligrep-server/bin
-sudo mkdir -p /opt/cligrep-server/data
-sudo chown -R "$USER":"$USER" /opt/cligrep-server
-cp build/cligrep-server /opt/cligrep-server/bin/cligrep-server
-```
-
-If you want to deploy with the existing SQLite data immediately, copy the current database file too:
-
-```bash
-cp data/cligrep.db /opt/cligrep-server/data/cligrep.db
-```
-
-This lets the server start against the existing seeded data and previously saved comments,
-favorites, assets, and execution logs.
-
-## Environment Variables
-
-The service supports these runtime environment variables:
-
-- `CLIGREP_HTTP_ADDR`
-- `CLIGREP_DB_PATH`
-- `CLIGREP_BUSYBOX_IMAGE`
-- `CLIGREP_PYTHON_IMAGE`
-- `CLIGREP_CONTAINER_CPUS`
-- `CLIGREP_CONTAINER_MEMORY`
-- `CLIGREP_COMMAND_TIMEOUT_MS`
-- `CLIGREP_CORS_ORIGIN`
-
-Recommended production-style env file at `/opt/cligrep-server/cligrep-server.env`:
-
-```bash
+```dotenv
 CLIGREP_HTTP_ADDR=:8080
-CLIGREP_DB_PATH=/opt/cligrep-server/data/cligrep.db
+CLIGREP_DB_PATH=./data/cligrep.db
 CLIGREP_BUSYBOX_IMAGE=busybox:1.36.1
 CLIGREP_PYTHON_IMAGE=python:3.12-slim
 CLIGREP_CONTAINER_CPUS=0.50
 CLIGREP_CONTAINER_MEMORY=128m
 CLIGREP_COMMAND_TIMEOUT_MS=4000
-CLIGREP_CORS_ORIGIN=*
+CLIGREP_CORS_ORIGIN=http://127.0.0.1:8081,http://localhost:8081,http://127.0.0.1:5173,http://localhost:5173
 ```
 
-## Run Manually
+说明：
+- `CLIGREP_HTTP_ADDR`：HTTP 监听地址。
+- `CLIGREP_DB_PATH`：SQLite 数据库路径，可使用绝对路径或相对仓库根目录的路径。
+- `CLIGREP_BUSYBOX_IMAGE` / `CLIGREP_PYTHON_IMAGE`：沙箱运行镜像。
+- `CLIGREP_CONTAINER_CPUS` / `CLIGREP_CONTAINER_MEMORY`：沙箱容器资源限制。
+- `CLIGREP_COMMAND_TIMEOUT_MS`：单次命令执行超时。
+- `CLIGREP_CORS_ORIGIN`：允许的跨域来源，支持 `*` 或逗号分隔多个 origin。
 
-Start the service with the env file loaded:
+## 4. 部署
+### 仓库内运行布局
+执行脚本后，仓库内会形成如下运行目录：
 
+```text
+cligrep-server/
+  build/cligrep-server
+  data/cligrep.db
+  logs/cligrep-server.log
+  run/cligrep-server.pid
+  .env
+```
+
+### 构建与启动
 ```bash
-set -a
-. /opt/cligrep-server/cligrep-server.env
-set +a
-/opt/cligrep-server/bin/cligrep-server
+cp .env.example .env
+./build.sh
+./start.sh
 ```
 
-The SQLite database will be created at `CLIGREP_DB_PATH` if it does not already exist.
-If you copied an existing `cligrep.db`, the service will reuse it directly.
+### 前端联调
+- 前端开发模式默认通过 Vite 代理访问 `http://127.0.0.1:8080`。
+- 前端容器部署模式默认由 Nginx 把 `/api` 与 `/healthz` 转发到宿主机 `:8080`。
+- 如需开放其他前端来源，修改 `.env` 中 `CLIGREP_CORS_ORIGIN` 后重启服务。
 
-## Export SQLite To SQL
+### 可选 systemd 部署
+需要系统托管时，可把 `ExecStart` 指向编译后的二进制，并通过 `EnvironmentFile` 复用同一份 `.env` 内容。此方式是可选增强，不是本仓库默认运行路径。
 
-Create a SQL dump from the current SQLite database:
-
+## 5. 运维
+### 查看日志
 ```bash
-mkdir -p backup && sqlite3 data/cligrep.db ".output backup/cligrep-$(date +%F-%H%M%S).sql" ".dump"
+tail -f logs/cligrep-server.log
 ```
 
-If you prefer a fixed output filename:
-
-```bash
-mkdir -p backup
-sqlite3 data/cligrep.db ".dump" > backup/cligrep.sql
-```
-
-If the service is actively writing, export during a quiet window or stop the service briefly first.
-
-## Run With systemd
-
-Recommended unit file: `/etc/systemd/system/cligrep-server.service`
-
-```ini
-[Unit]
-Description=cligrep-server
-After=network.target docker.service
-Wants=docker.service
-
-[Service]
-Type=simple
-WorkingDirectory=/opt/cligrep-server
-EnvironmentFile=/opt/cligrep-server/cligrep-server.env
-ExecStart=/opt/cligrep-server/bin/cligrep-server
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start the service:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now cligrep-server
-sudo systemctl status cligrep-server
-```
-
-## Verification
-
-Health check:
-
+### 查看健康状态
 ```bash
 curl http://127.0.0.1:8080/healthz
 ```
 
-Expected response includes:
-
-```json
-{"status":"ok"}
-```
-
-Example sandbox verification:
-
+### 查看进程状态
 ```bash
-curl -X POST http://127.0.0.1:8080/api/v1/exec \
-  -H 'Content-Type: application/json' \
-  -d '{"cliSlug":"sed","line":"sed --help"}'
+cat run/cligrep-server.pid
+ps -p "$(cat run/cligrep-server.pid)"
 ```
 
-Example Python sandbox verification:
-
-```bash
-curl -X POST http://127.0.0.1:8080/api/v1/builtin/exec \
-  -H 'Content-Type: application/json' \
-  -d '{"line":"create python \"echo args\""}'
-```
-
-## Notes
-
-- The backend is native Go, but sandbox execution still depends on host Docker.
-- No backend container, `docker-compose.yml`, or `cligrep-network` setup is required here.
-- The frontend can point to this backend by setting `VITE_API_BASE` to the host URL of this service.
+### 常见排查
+- 启动失败且日志提示端口冲突：检查 `8080` 是否已被其他进程占用，或修改 `CLIGREP_HTTP_ADDR`。
+- 页面跨域失败：确认 `CLIGREP_CORS_ORIGIN` 包含当前前端访问地址，并重新执行 `./stop.sh && ./start.sh`。
+- 执行命令失败：确认 Docker Engine 正常运行，且 `busybox:1.36.1` 与 `python:3.12-slim` 已预拉取。
+- 数据库路径异常：检查 `CLIGREP_DB_PATH` 所在目录是否可写，脚本会在启动前尝试创建父目录。
