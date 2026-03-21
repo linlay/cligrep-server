@@ -25,7 +25,7 @@ func Load() Config {
 	}
 
 	return Config{
-		HTTPAddress:     getenv("CLIGREP_HTTP_ADDR", ":8080"),
+		HTTPAddress:     getenv("CLIGREP_HTTP_ADDR", ":11802"),
 		DatabasePath:    getenv("CLIGREP_DB_PATH", filepath.Join(root, "data", "cligrep.db")),
 		BusyBoxImage:    getenv("CLIGREP_BUSYBOX_IMAGE", "busybox:1.36.1"),
 		PythonImage:     getenv("CLIGREP_PYTHON_IMAGE", "python:3.12-slim"),

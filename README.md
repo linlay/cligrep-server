@@ -23,7 +23,7 @@ cp .env.example .env
 ./start.sh
 ```
 
-服务默认监听 `http://127.0.0.1:8080`，数据库默认写入仓库内 `data/cligrep.db`。
+服务默认监听 `http://127.0.0.1:11802`，数据库默认写入仓库内 `data/cligrep.db`。
 
 ### 停止服务
 ```bash
@@ -41,7 +41,7 @@ go test ./...
 - 配置项如下：
 
 ```dotenv
-CLIGREP_HTTP_ADDR=:8080
+CLIGREP_HTTP_ADDR=:11802
 CLIGREP_DB_PATH=./data/cligrep.db
 CLIGREP_BUSYBOX_IMAGE=busybox:1.36.1
 CLIGREP_PYTHON_IMAGE=python:3.12-slim
@@ -80,8 +80,8 @@ cp .env.example .env
 ```
 
 ### 前端联调
-- 前端开发模式默认通过 Vite 代理访问 `http://127.0.0.1:8080`。
-- 前端容器部署模式默认由 Nginx 把 `/api` 与 `/healthz` 转发到宿主机 `:8080`。
+- 前端开发模式默认通过 Vite 代理访问 `http://127.0.0.1:11802`。
+- 前端容器部署模式默认由 Nginx 把 `/api` 与 `/healthz` 转发到宿主机 `:11802`。
 - 如需开放其他前端来源，修改 `.env` 中 `CLIGREP_CORS_ORIGIN` 后重启服务。
 
 ### 可选 systemd 部署
@@ -95,7 +95,7 @@ tail -f logs/cligrep-server.log
 
 ### 查看健康状态
 ```bash
-curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:11802/healthz
 ```
 
 ### 查看进程状态
@@ -105,7 +105,7 @@ ps -p "$(cat run/cligrep-server.pid)"
 ```
 
 ### 常见排查
-- 启动失败且日志提示端口冲突：检查 `8080` 是否已被其他进程占用，或修改 `CLIGREP_HTTP_ADDR`。
+- 启动失败且日志提示端口冲突：检查 `11802` 是否已被其他进程占用，或修改 `CLIGREP_HTTP_ADDR`。
 - 页面跨域失败：确认 `CLIGREP_CORS_ORIGIN` 包含当前前端访问地址，并重新执行 `./stop.sh && ./start.sh`。
 - 执行命令失败：确认 Docker Engine 正常运行，且 `busybox:1.36.1` 与 `python:3.12-slim` 已预拉取。
 - 数据库路径异常：检查 `CLIGREP_DB_PATH` 所在目录是否可写，脚本会在启动前尝试创建父目录。
