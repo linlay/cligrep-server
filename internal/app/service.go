@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/linlay/cligrep-server/internal/builtin"
 	"github.com/linlay/cligrep-server/internal/config"
@@ -29,9 +30,26 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	runner := sandbox.NewRunner(cfg)
-	if err := store.SeedCLIs(ctx, seed.ExtractSeededCLIs(ctx, runner)); err != nil {
+	clis := seed.ExtractSeededCLIs(ctx, runner)
+	if err := store.SeedCLIs(ctx, clis); err != nil {
 		store.Close()
 		return nil, fmt.Errorf("seed database: %w", err)
+	}
+	if err := store.SeedMockUsers(ctx, seed.MockUsers()); err != nil {
+		store.Close()
+		return nil, fmt.Errorf("seed mock users: %w", err)
+	}
+	for _, favorite := range seed.FavoriteSeeds() {
+		if err := store.SeedFavoritesByUsername(ctx, favorite.Username, favorite.CLISlug); err != nil {
+			store.Close()
+			return nil, fmt.Errorf("seed favorites: %w", err)
+		}
+	}
+	for _, execution := range seed.ExecutionSeeds() {
+		if err := store.SeedExecutionLog(ctx, execution.SeedKey, execution.CLISlug, execution.Line, execution.Mode, execution.DurationMS, execution.CreatedAt); err != nil {
+			store.Close()
+			return nil, fmt.Errorf("seed execution logs: %w", err)
+		}
 	}
 
 	return &App{
@@ -48,17 +66,31 @@ func (a *App) Close() error {
 
 func (a *App) Health(ctx context.Context) map[string]any {
 	return map[string]any{
-		"status":         "ok",
-		"busyboxImage":   a.cfg.BusyBoxImage,
-		"pythonImage":    a.cfg.PythonImage,
-		"databasePath":   a.cfg.DatabasePath,
-		"timestamp":      ctx.Value(struct{}{}),
-		"singleLineOnly": true,
+		"status":            "ok",
+		"busyboxImage":      a.cfg.BusyBoxImage,
+		"pythonImage":       a.cfg.PythonImage,
+		"databasePath":      a.cfg.DatabasePath,
+		"timestamp":         time.Now().UTC().Format(time.RFC3339),
+		"commandTimeoutMs":  a.cfg.CommandTimeout.Milliseconds(),
+		"singleLineOnly":    true,
+		"runtimeKinds":      []string{"SANDBOX", "WEBSITE", "TEXT"},
+		"homepageSortModes": []string{"favorites", "newest", "runs"},
 	}
 }
 
-func (a *App) Trending(ctx context.Context) ([]models.CLI, error) {
-	return a.store.ListTrending(ctx, 12)
+func (a *App) Homepage(ctx context.Context, sort string) (map[string]any, error) {
+	items, total, err := a.store.ListHomepageCLIs(ctx, sort, 12)
+	if err != nil {
+		return nil, err
+	}
+	if sort == "" {
+		sort = "favorites"
+	}
+	return map[string]any{
+		"items": items,
+		"total": total,
+		"sort":  sort,
+	}, nil
 }
 
 func (a *App) Search(ctx context.Context, query string) ([]models.CLI, error) {
@@ -119,6 +151,9 @@ func (a *App) ExecuteCLI(ctx context.Context, request models.ExecRequest) (model
 	}
 	if cli.Type == models.CLITypeBuiltin {
 		return models.ExecutionResult{}, errors.New("builtin commands must use /api/v1/builtin/exec")
+	}
+	if !cli.Executable || cli.EnvironmentKind != models.EnvironmentKindSandbox {
+		return models.ExecutionResult{}, errors.New("this CLI is indexed for reference only and cannot be executed in the sandbox")
 	}
 
 	tokens, err := util.SplitLine(line)

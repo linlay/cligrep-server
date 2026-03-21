@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/linlay/cligrep-server/internal/app"
 	"github.com/linlay/cligrep-server/internal/models"
@@ -61,11 +60,7 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":         "ok",
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
-		"singleLineOnly": true,
-	})
+	writeJSON(w, http.StatusOK, h.app.Health(r.Context()))
 }
 
 func (h *Handler) handleTrending(w http.ResponseWriter, r *http.Request) {
@@ -74,12 +69,12 @@ func (h *Handler) handleTrending(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clis, err := h.app.Trending(r.Context())
+	payload, err := h.app.Homepage(r.Context(), r.URL.Query().Get("sort"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": clis})
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {

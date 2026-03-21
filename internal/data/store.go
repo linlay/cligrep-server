@@ -20,6 +20,16 @@ type Store struct {
 	db *sql.DB
 }
 
+const cliSelectColumns = `
+	SELECT c.slug, c.display_name, c.summary, c.type, c.tags_json, c.help_text, c.version_text,
+	       c.popularity, c.runtime_image, c.enabled, c.example_line,
+	       c.environment_kind, c.source_type, c.author, c.github_url, c.gitee_url,
+	       c.license, c.created_at, c.original_command, c.executable,
+	       (SELECT COUNT(*) FROM favorites f WHERE f.cli_slug = c.slug) AS favorite_count,
+	       (SELECT COUNT(*) FROM comments m WHERE m.cli_slug = c.slug) AS comment_count,
+	       (SELECT COUNT(*) FROM execution_logs e WHERE e.cli_slug = c.slug) AS run_count
+	FROM clis c`
+
 func Open(path string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
@@ -109,6 +119,12 @@ func (s *Store) init() error {
 			created_at TEXT NOT NULL,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS seed_execution_records (
+			seed_key TEXT PRIMARY KEY,
+			cli_slug TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			FOREIGN KEY (cli_slug) REFERENCES clis(slug) ON DELETE CASCADE
+		);`,
 	}
 
 	for _, statement := range statements {
@@ -117,13 +133,42 @@ func (s *Store) init() error {
 		}
 	}
 
+	if err := s.ensureColumn("clis", "environment_kind", "TEXT NOT NULL DEFAULT 'SANDBOX'"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("clis", "source_type", "TEXT NOT NULL DEFAULT 'unknown'"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("clis", "author", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("clis", "github_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("clis", "gitee_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("clis", "license", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("clis", "created_at", "TEXT NOT NULL DEFAULT '2026-01-01T00:00:00Z'"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("clis", "original_command", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("clis", "executable", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func (s *Store) SeedCLIs(ctx context.Context, clis []models.CLI) error {
 	query := `INSERT INTO clis
-		(slug, display_name, summary, type, tags_json, help_text, version_text, popularity, runtime_image, enabled, example_line)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(slug, display_name, summary, type, tags_json, help_text, version_text, popularity, runtime_image, enabled, example_line,
+		 environment_kind, source_type, author, github_url, gitee_url, license, created_at, original_command, executable)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(slug) DO UPDATE SET
 			display_name=excluded.display_name,
 			summary=excluded.summary,
@@ -134,7 +179,16 @@ func (s *Store) SeedCLIs(ctx context.Context, clis []models.CLI) error {
 			popularity=excluded.popularity,
 			runtime_image=excluded.runtime_image,
 			enabled=excluded.enabled,
-			example_line=excluded.example_line`
+			example_line=excluded.example_line,
+			environment_kind=excluded.environment_kind,
+			source_type=excluded.source_type,
+			author=excluded.author,
+			github_url=excluded.github_url,
+			gitee_url=excluded.gitee_url,
+			license=excluded.license,
+			created_at=excluded.created_at,
+			original_command=excluded.original_command,
+			executable=excluded.executable`
 
 	for _, cli := range clis {
 		tagsJSON, err := json.Marshal(cli.Tags)
@@ -154,6 +208,15 @@ func (s *Store) SeedCLIs(ctx context.Context, clis []models.CLI) error {
 			cli.RuntimeImage,
 			boolToInt(cli.Enabled),
 			cli.ExampleLine,
+			cli.EnvironmentKind,
+			cli.SourceType,
+			cli.Author,
+			cli.GitHubURL,
+			cli.GiteeURL,
+			cli.License,
+			cli.CreatedAt.UTC().Format(time.RFC3339),
+			cli.OriginalCommand,
+			boolToInt(cli.Executable),
 		); err != nil {
 			return fmt.Errorf("seed cli %s: %w", cli.Slug, err)
 		}
@@ -162,26 +225,45 @@ func (s *Store) SeedCLIs(ctx context.Context, clis []models.CLI) error {
 	return nil
 }
 
-func (s *Store) ListTrending(ctx context.Context, limit int) ([]models.CLI, error) {
+func (s *Store) ListHomepageCLIs(ctx context.Context, sort string, limit int) ([]models.CLI, int, error) {
 	if limit <= 0 {
 		limit = 12
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.slug, c.display_name, c.summary, c.type, c.tags_json, c.help_text, c.version_text,
-		       c.popularity, c.runtime_image, c.enabled, c.example_line,
-		       (SELECT COUNT(*) FROM favorites f WHERE f.cli_slug = c.slug) AS favorite_count,
-		       (SELECT COUNT(*) FROM comments m WHERE m.cli_slug = c.slug) AS comment_count
-		FROM clis c
-		WHERE c.enabled = 1 AND c.type != 'builtin'
-		ORDER BY c.popularity DESC, c.display_name ASC
-		LIMIT ?`, limit)
+	total, err := s.CountHomepageCLIs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("query trending clis: %w", err)
+		return nil, 0, err
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		fmt.Sprintf(`%s
+		WHERE c.enabled = 1 AND c.environment_kind != 'WEBSITE'
+		ORDER BY %s
+		LIMIT ?`, cliSelectColumns, homepageSortOrder(sort)),
+		limit,
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query homepage clis: %w", err)
 	}
 	defer rows.Close()
 
-	return scanCLIs(rows)
+	clis, err := scanCLIs(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	return clis, total, nil
+}
+
+func (s *Store) CountHomepageCLIs(ctx context.Context) (int, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM clis
+		WHERE enabled = 1 AND environment_kind != 'WEBSITE'`)
+	var total int
+	if err := row.Scan(&total); err != nil {
+		return 0, fmt.Errorf("count homepage clis: %w", err)
+	}
+	return total, nil
 }
 
 func (s *Store) SearchCLIs(ctx context.Context, query string, limit int) ([]models.CLI, error) {
@@ -190,12 +272,7 @@ func (s *Store) SearchCLIs(ctx context.Context, query string, limit int) ([]mode
 	}
 
 	pattern := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.slug, c.display_name, c.summary, c.type, c.tags_json, c.help_text, c.version_text,
-		       c.popularity, c.runtime_image, c.enabled, c.example_line,
-		       (SELECT COUNT(*) FROM favorites f WHERE f.cli_slug = c.slug) AS favorite_count,
-		       (SELECT COUNT(*) FROM comments m WHERE m.cli_slug = c.slug) AS comment_count
-		FROM clis c
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`%s
 		WHERE c.enabled = 1
 		  AND (
 			  LOWER(c.slug) LIKE ?
@@ -206,9 +283,9 @@ func (s *Store) SearchCLIs(ctx context.Context, query string, limit int) ([]mode
 		  )
 		ORDER BY
 			CASE WHEN c.type = 'builtin' THEN 0 ELSE 1 END,
-			c.popularity DESC,
+			(SELECT COUNT(*) FROM favorites f WHERE f.cli_slug = c.slug) DESC,
 			c.display_name ASC
-		LIMIT ?`, pattern, pattern, pattern, pattern, pattern, limit)
+		LIMIT ?`, cliSelectColumns), pattern, pattern, pattern, pattern, pattern, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search clis: %w", err)
 	}
@@ -218,13 +295,8 @@ func (s *Store) SearchCLIs(ctx context.Context, query string, limit int) ([]mode
 }
 
 func (s *Store) GetCLI(ctx context.Context, slug string) (models.CLI, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT c.slug, c.display_name, c.summary, c.type, c.tags_json, c.help_text, c.version_text,
-		       c.popularity, c.runtime_image, c.enabled, c.example_line,
-		       (SELECT COUNT(*) FROM favorites f WHERE f.cli_slug = c.slug) AS favorite_count,
-		       (SELECT COUNT(*) FROM comments m WHERE m.cli_slug = c.slug) AS comment_count
-		FROM clis c
-		WHERE c.slug = ? AND c.enabled = 1`, slug)
+	row := s.db.QueryRowContext(ctx, fmt.Sprintf(`%s
+		WHERE c.slug = ? AND c.enabled = 1`, cliSelectColumns), slug)
 
 	return scanCLI(row)
 }
@@ -254,6 +326,61 @@ func (s *Store) GetUser(ctx context.Context, userID int64) (models.User, error) 
 	return scanUser(row)
 }
 
+func (s *Store) SeedMockUsers(ctx context.Context, usernames []string) error {
+	for _, username := range usernames {
+		if _, err := s.LoginMock(ctx, username); err != nil {
+			return fmt.Errorf("seed mock user %s: %w", username, err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) SeedFavoritesByUsername(ctx context.Context, username, cliSlug string) error {
+	user, err := s.LoginMock(ctx, username)
+	if err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO favorites (user_id, cli_slug, created_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(user_id, cli_slug) DO NOTHING`,
+		user.ID, cliSlug, time.Now().UTC().Format(time.RFC3339),
+	); err != nil {
+		return fmt.Errorf("seed favorite %s/%s: %w", username, cliSlug, err)
+	}
+	return nil
+}
+
+func (s *Store) SeedExecutionLog(ctx context.Context, seedKey, cliSlug, line, mode string, durationMS int64, createdAt time.Time) error {
+	result, err := s.db.ExecContext(ctx, `
+		INSERT INTO seed_execution_records (seed_key, cli_slug, created_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(seed_key) DO NOTHING`,
+		seedKey, cliSlug, createdAt.UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		return fmt.Errorf("seed execution marker %s: %w", seedKey, err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("seed execution marker rows affected: %w", err)
+	}
+	if rows == 0 {
+		return nil
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO execution_logs (user_id, cli_slug, line, mode, stdout, stderr, exit_code, duration_ms, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		nil, cliSlug, line, mode, "seeded execution", "", 0, durationMS, createdAt.UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		return fmt.Errorf("seed execution log %s: %w", seedKey, err)
+	}
+	return nil
+}
+
 func (s *Store) SetFavorite(ctx context.Context, mutation models.FavoriteMutation) error {
 	if mutation.Active {
 		_, err := s.db.ExecContext(ctx, `
@@ -275,15 +402,11 @@ func (s *Store) SetFavorite(ctx context.Context, mutation models.FavoriteMutatio
 }
 
 func (s *Store) ListFavorites(ctx context.Context, userID int64) ([]models.CLI, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.slug, c.display_name, c.summary, c.type, c.tags_json, c.help_text, c.version_text,
-		       c.popularity, c.runtime_image, c.enabled, c.example_line,
-		       (SELECT COUNT(*) FROM favorites f WHERE f.cli_slug = c.slug) AS favorite_count,
-		       (SELECT COUNT(*) FROM comments m WHERE m.cli_slug = c.slug) AS comment_count
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`%s
 		FROM favorites f
 		JOIN clis c ON c.slug = f.cli_slug
 		WHERE f.user_id = ?
-		ORDER BY f.created_at DESC`, userID)
+		ORDER BY f.created_at DESC`, cliSelectColumns), userID)
 	if err != nil {
 		return nil, fmt.Errorf("list favorites: %w", err)
 	}
@@ -390,9 +513,11 @@ type scanner interface {
 
 func scanCLI(row scanner) (models.CLI, error) {
 	var (
-		cli     models.CLI
-		tagsRaw string
-		enabled int
+		cli          models.CLI
+		tagsRaw      string
+		enabled      int
+		executable   int
+		createdAtRaw string
 	)
 
 	if err := row.Scan(
@@ -407,8 +532,18 @@ func scanCLI(row scanner) (models.CLI, error) {
 		&cli.RuntimeImage,
 		&enabled,
 		&cli.ExampleLine,
+		&cli.EnvironmentKind,
+		&cli.SourceType,
+		&cli.Author,
+		&cli.GitHubURL,
+		&cli.GiteeURL,
+		&cli.License,
+		&createdAtRaw,
+		&cli.OriginalCommand,
+		&executable,
 		&cli.FavoriteCount,
 		&cli.CommentCount,
+		&cli.RunCount,
 	); err != nil {
 		return models.CLI{}, err
 	}
@@ -417,7 +552,14 @@ func scanCLI(row scanner) (models.CLI, error) {
 		return models.CLI{}, fmt.Errorf("unmarshal cli tags: %w", err)
 	}
 
+	createdAt, err := time.Parse(time.RFC3339, createdAtRaw)
+	if err != nil {
+		return models.CLI{}, fmt.Errorf("parse cli created timestamp: %w", err)
+	}
+
 	cli.Enabled = enabled == 1
+	cli.Executable = executable == 1
+	cli.CreatedAt = createdAt
 	return cli, nil
 }
 
@@ -465,4 +607,47 @@ func generateMockIP(username string) string {
 	_, _ = hasher.Write([]byte(strings.ToLower(username)))
 	sum := hasher.Sum32()
 	return fmt.Sprintf("10.24.%d.%d", (sum>>8)&0xff, sum&0xff)
+}
+
+func (s *Store) ensureColumn(tableName, columnName, definition string) error {
+	rows, err := s.db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
+	if err != nil {
+		return fmt.Errorf("inspect sqlite columns for %s: %w", tableName, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &pk); err != nil {
+			return fmt.Errorf("scan sqlite table_info for %s: %w", tableName, err)
+		}
+		if name == columnName {
+			return nil
+		}
+	}
+
+	if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, tableName, columnName, definition)); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", tableName, columnName, err)
+	}
+	return nil
+}
+
+func homepageSortOrder(sort string) string {
+	switch strings.ToLower(strings.TrimSpace(sort)) {
+	case "newest":
+		return "c.created_at DESC, c.display_name ASC"
+	case "runs":
+		return "(SELECT COUNT(*) FROM execution_logs e WHERE e.cli_slug = c.slug) DESC, c.display_name ASC"
+	case "favorites", "":
+		return "(SELECT COUNT(*) FROM favorites f WHERE f.cli_slug = c.slug) DESC, c.display_name ASC"
+	default:
+		return "(SELECT COUNT(*) FROM favorites f WHERE f.cli_slug = c.slug) DESC, c.display_name ASC"
+	}
 }
