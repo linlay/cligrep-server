@@ -60,6 +60,15 @@ sudo chown -R "$USER":"$USER" /opt/cligrep-server
 cp build/cligrep-server /opt/cligrep-server/bin/cligrep-server
 ```
 
+If you want to deploy with the existing SQLite data immediately, copy the current database file too:
+
+```bash
+cp data/cligrep.db /opt/cligrep-server/data/cligrep.db
+```
+
+This lets the server start against the existing seeded data and previously saved comments,
+favorites, assets, and execution logs.
+
 ## Environment Variables
 
 The service supports these runtime environment variables:
@@ -98,6 +107,24 @@ set +a
 ```
 
 The SQLite database will be created at `CLIGREP_DB_PATH` if it does not already exist.
+If you copied an existing `cligrep.db`, the service will reuse it directly.
+
+## Export SQLite To SQL
+
+Create a SQL dump from the current SQLite database:
+
+```bash
+mkdir -p backup && sqlite3 data/cligrep.db ".output backup/cligrep-$(date +%F-%H%M%S).sql" ".dump"
+```
+
+If you prefer a fixed output filename:
+
+```bash
+mkdir -p backup
+sqlite3 data/cligrep.db ".dump" > backup/cligrep.sql
+```
+
+If the service is actively writing, export during a quiet window or stop the service briefly first.
 
 ## Run With systemd
 
