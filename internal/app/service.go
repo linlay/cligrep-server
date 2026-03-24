@@ -64,7 +64,13 @@ func (a *App) Close() error {
 	return a.store.Close()
 }
 
+func (a *App) SandboxStatus(ctx context.Context) sandbox.ProbeResult {
+	return a.runner.Probe(ctx)
+}
+
 func (a *App) Health(ctx context.Context) map[string]any {
+	sandboxStatus := a.SandboxStatus(ctx)
+
 	return map[string]any{
 		"status":            "ok",
 		"busyboxImage":      a.cfg.BusyBoxImage,
@@ -75,6 +81,8 @@ func (a *App) Health(ctx context.Context) map[string]any {
 		"singleLineOnly":    true,
 		"runtimeKinds":      []string{"SANDBOX", "WEBSITE", "TEXT"},
 		"homepageSortModes": []string{"favorites", "newest", "runs"},
+		"sandboxReady":      sandboxStatus.Ready,
+		"sandbox":           sandboxStatus,
 	}
 }
 

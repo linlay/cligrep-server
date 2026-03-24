@@ -42,7 +42,7 @@
 - `models` 中定义了 `CLI`、`ExecutionResult`、`BuiltinExecResponse`、`Comment`、`FavoriteMutation`、`LoginRequest` 等接口数据结构。
 
 ## 6. API 定义
-- `GET /healthz`：返回服务健康状态、镜像配置、数据库路径和运行能力摘要。
+- `GET /healthz`：返回服务健康状态、镜像配置、数据库路径和运行能力摘要，并附带 `sandboxReady` 与 `sandbox` 详细探测结果。
 - `GET /api/v1/clis/trending`：返回首页热门 CLI 列表。
 - `GET /api/v1/clis/search`：按关键字搜索 CLI。
 - `GET /api/v1/clis/:slug`：返回单个 CLI 详情、评论与示例命令。
@@ -59,6 +59,7 @@
 - `CLIGREP_CORS_ORIGIN` 现在直接作用于 HTTP 中间件，支持 `*` 或逗号分隔多个 origin。
 - SQLite 默认路径是工作目录下的 `data/cligrep.db`；脚本会在启动前保证父目录存在。
 - 沙箱执行依赖宿主机 Docker，服务本身不容器化。
+- 服务启动时会主动探测 Docker CLI、Docker daemon、BusyBox 镜像、Python 镜像；若未就绪，只打印一次 warning，不阻止 HTTP 服务启动。
 - 运行脚本以仓库内目录为默认目标：`build/`、`logs/`、`run/`。
 
 ## 8. 开发流程
@@ -74,3 +75,12 @@
 - 当前鉴权是 mock 模式，不适用于正式生产认证场景。
 - SQLite 适合当前单机部署模型，不适合多实例并发写入。
 - `start.sh` 默认用后台进程模式启动，适合轻量部署与联调；更重的生产托管可改用 systemd。
+
+## 10. 沙箱排障
+- 先看启动日志中的 `warning: sandbox is not ready`，再用 `GET /healthz` 确认 `sandbox.issues`。
+- 常用命令：
+  - `docker info`
+  - `docker image inspect busybox:1.36.1`
+  - `docker image inspect python:3.12-slim`
+  - `docker pull busybox:1.36.1`
+  - `docker pull python:3.12-slim`

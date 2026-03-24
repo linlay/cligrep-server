@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -8,17 +9,31 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/linlay/cligrep-server/internal/app"
 	"github.com/linlay/cligrep-server/internal/models"
 )
 
 type Handler struct {
-	app         *app.App
+	app         application
 	mux         *http.ServeMux
 	corsOrigins []string
 }
 
-func NewHandler(application *app.App, corsOrigin string) http.Handler {
+type application interface {
+	Health(ctx context.Context) map[string]any
+	Homepage(ctx context.Context, sort string) (map[string]any, error)
+	Search(ctx context.Context, query string) ([]models.CLI, error)
+	GetCLI(ctx context.Context, slug string) (map[string]any, error)
+	ExecuteCLI(ctx context.Context, request models.ExecRequest) (models.ExecutionResult, error)
+	ExecuteBuiltin(ctx context.Context, request models.BuiltinExecRequest) (models.BuiltinExecResponse, error)
+	Login(ctx context.Context, request models.LoginRequest) (models.User, error)
+	AnonymousSession(ctx context.Context) (models.User, error)
+	ListFavorites(ctx context.Context, userID int64) ([]models.CLI, error)
+	SetFavorite(ctx context.Context, request models.FavoriteMutation) error
+	ListComments(ctx context.Context, cliSlug string) ([]models.Comment, error)
+	AddComment(ctx context.Context, request models.CommentMutation) (models.Comment, error)
+}
+
+func NewHandler(application application, corsOrigin string) http.Handler {
 	handler := &Handler{
 		app:         application,
 		mux:         http.NewServeMux(),

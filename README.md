@@ -98,6 +98,13 @@ tail -f logs/cligrep-server.log
 curl http://127.0.0.1:11802/healthz
 ```
 
+`/healthz` 现在除了基础服务状态外，还会返回：
+- `sandboxReady`：宿主机沙箱是否可直接执行命令。
+- `sandbox.dockerCli`：是否能在 `PATH` 中找到 Docker CLI。
+- `sandbox.dockerDaemon`：是否能连通本机 Docker daemon。
+- `sandbox.busyboxImage` / `sandbox.pythonImage`：所需镜像是否已在本地预拉取。
+- `sandbox.issues`：未就绪时的具体问题列表。
+
 ### 查看进程状态
 ```bash
 cat run/cligrep-server.pid
@@ -105,7 +112,17 @@ ps -p "$(cat run/cligrep-server.pid)"
 ```
 
 ### 常见排查
+- 启动日志出现 `warning: sandbox is not ready`：说明服务已启动，但沙箱依赖仍有缺失，先看 `/healthz` 里的 `sandbox` 与 `issues` 字段。
 - 启动失败且日志提示端口冲突：检查 `11802` 是否已被其他进程占用，或修改 `CLIGREP_HTTP_ADDR`。
 - 页面跨域失败：确认 `CLIGREP_CORS_ORIGIN` 包含当前前端访问地址，并重新执行 `./stop.sh && ./start.sh`。
 - 执行命令失败：确认 Docker Engine 正常运行，且 `busybox:1.36.1` 与 `python:3.12-slim` 已预拉取。
 - 数据库路径异常：检查 `CLIGREP_DB_PATH` 所在目录是否可写，脚本会在启动前尝试创建父目录。
+
+推荐排查命令：
+```bash
+docker info
+docker image inspect busybox:1.36.1
+docker image inspect python:3.12-slim
+docker pull busybox:1.36.1
+docker pull python:3.12-slim
+```

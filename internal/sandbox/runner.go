@@ -15,11 +15,61 @@ import (
 )
 
 type Runner struct {
-	cfg config.Config
+	cfg          config.Config
+	lookPath     func(file string) (string, error)
+	checkCommand func(ctx context.Context, name string, args ...string) error
+}
+
+type ProbeResult struct {
+	DockerCLI    bool     `json:"dockerCli"`
+	DockerDaemon bool     `json:"dockerDaemon"`
+	BusyBoxImage bool     `json:"busyboxImage"`
+	PythonImage  bool     `json:"pythonImage"`
+	Ready        bool     `json:"ready"`
+	Issues       []string `json:"issues"`
 }
 
 func NewRunner(cfg config.Config) *Runner {
-	return &Runner{cfg: cfg}
+	return &Runner{
+		cfg:      cfg,
+		lookPath: exec.LookPath,
+		checkCommand: func(ctx context.Context, name string, args ...string) error {
+			return exec.CommandContext(ctx, name, args...).Run()
+		},
+	}
+}
+
+func (r *Runner) Probe(ctx context.Context) ProbeResult {
+	probe := ProbeResult{
+		Issues: make([]string, 0, 2),
+	}
+
+	if _, err := r.lookPath("docker"); err != nil {
+		probe.Issues = append(probe.Issues, "docker CLI is not installed or not in PATH")
+		return probe
+	}
+	probe.DockerCLI = true
+
+	if err := r.checkCommand(ctx, "docker", "info"); err != nil {
+		probe.Issues = append(probe.Issues, "docker daemon is not reachable")
+		return probe
+	}
+	probe.DockerDaemon = true
+
+	if r.imageAvailable(ctx, r.cfg.BusyBoxImage) {
+		probe.BusyBoxImage = true
+	} else {
+		probe.Issues = append(probe.Issues, fmt.Sprintf("docker image %s is not available locally", r.cfg.BusyBoxImage))
+	}
+
+	if r.imageAvailable(ctx, r.cfg.PythonImage) {
+		probe.PythonImage = true
+	} else {
+		probe.Issues = append(probe.Issues, fmt.Sprintf("docker image %s is not available locally", r.cfg.PythonImage))
+	}
+
+	probe.Ready = probe.DockerCLI && probe.DockerDaemon && probe.BusyBoxImage && probe.PythonImage
+	return probe
 }
 
 func (r *Runner) ExtractBusyBoxHelp(ctx context.Context, cli string) (string, string, error) {
@@ -136,6 +186,5 @@ func (r *Runner) imageAvailable(ctx context.Context, image string) bool {
 	checkCtx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
 	defer cancel()
 
-	cmd := exec.CommandContext(checkCtx, "docker", "image", "inspect", image)
-	return cmd.Run() == nil
+	return r.checkCommand(checkCtx, "docker", "image", "inspect", image) == nil
 }

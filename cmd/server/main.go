@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -45,6 +46,16 @@ func main() {
 			log.Printf("shutdown http server: %v", err)
 		}
 	}()
+
+	sandboxStatus := application.SandboxStatus(context.WithoutCancel(ctx))
+	if !sandboxStatus.Ready {
+		log.Printf(
+			"warning: sandbox is not ready: issues=%s busyboxImage=%s pythonImage=%s",
+			strings.Join(sandboxStatus.Issues, "; "),
+			cfg.BusyBoxImage,
+			cfg.PythonImage,
+		)
+	}
 
 	log.Printf("cli-server listening on %s", cfg.HTTPAddress)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
