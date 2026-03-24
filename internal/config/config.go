@@ -2,14 +2,17 @@ package config
 
 import (
 	"os"
-	"path/filepath"
 	"strconv"
 	"time"
 )
 
 type Config struct {
 	HTTPAddress     string
-	DatabasePath    string
+	DBHost          string
+	DBPort          int
+	DBName          string
+	DBUser          string
+	DBPassword      string
 	BusyBoxImage    string
 	PythonImage     string
 	ContainerCPUs   string
@@ -19,14 +22,13 @@ type Config struct {
 }
 
 func Load() Config {
-	root, err := os.Getwd()
-	if err != nil {
-		root = "."
-	}
-
 	return Config{
 		HTTPAddress:     getenv("CLIGREP_HTTP_ADDR", ":11802"),
-		DatabasePath:    getenv("CLIGREP_DB_PATH", filepath.Join(root, "data", "cligrep.db")),
+		DBHost:          getenv("CLIGREP_DB_HOST", "13.212.113.109"),
+		DBPort:          intEnv("CLIGREP_DB_PORT", 3306),
+		DBName:          getenv("CLIGREP_DB_NAME", "cligrep"),
+		DBUser:          getenv("CLIGREP_DB_USER", "cligrep"),
+		DBPassword:      getenv("CLIGREP_DB_PASSWORD", "cligrep0@123"),
 		BusyBoxImage:    getenv("CLIGREP_BUSYBOX_IMAGE", "busybox:1.36.1"),
 		PythonImage:     getenv("CLIGREP_PYTHON_IMAGE", "python:3.12-slim"),
 		ContainerCPUs:   getenv("CLIGREP_CONTAINER_CPUS", "0.50"),
@@ -39,6 +41,15 @@ func Load() Config {
 func getenv(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
+	}
+	return fallback
+}
+
+func intEnv(key string, fallback int) int {
+	if value := os.Getenv(key); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+			return parsed
+		}
 	}
 	return fallback
 }

@@ -8,7 +8,9 @@
 ## 2. 快速开始
 ### 前置要求
 - Go 1.26
+- MySQL 8.0+
 - Docker Engine 与 Docker CLI 可用
+- 已创建 MySQL 用户并允许访问目标库
 - 本机已预拉取运行沙箱所需镜像：
 
 ```bash
@@ -23,7 +25,7 @@ cp .env.example .env
 ./start.sh
 ```
 
-服务默认监听 `http://127.0.0.1:11802`，数据库默认写入仓库内 `data/cligrep.db`。
+服务默认监听 `http://127.0.0.1:11802`，并连接到 `13.212.113.109:3306/cligrep`。
 
 ### 停止服务
 ```bash
@@ -42,7 +44,11 @@ go test ./...
 
 ```dotenv
 CLIGREP_HTTP_ADDR=:11802
-CLIGREP_DB_PATH=./data/cligrep.db
+CLIGREP_DB_HOST=13.212.113.109
+CLIGREP_DB_PORT=3306
+CLIGREP_DB_NAME=cligrep
+CLIGREP_DB_USER=cligrep
+CLIGREP_DB_PASSWORD=cligrep0@123
 CLIGREP_BUSYBOX_IMAGE=busybox:1.36.1
 CLIGREP_PYTHON_IMAGE=python:3.12-slim
 CLIGREP_CONTAINER_CPUS=0.50
@@ -53,7 +59,9 @@ CLIGREP_CORS_ORIGIN=http://127.0.0.1:11801,http://localhost:11801,http://127.0.0
 
 说明：
 - `CLIGREP_HTTP_ADDR`：HTTP 监听地址。
-- `CLIGREP_DB_PATH`：SQLite 数据库路径，可使用绝对路径或相对仓库根目录的路径。
+- `CLIGREP_DB_HOST` / `CLIGREP_DB_PORT`：MySQL 地址与端口。
+- `CLIGREP_DB_NAME`：应用使用的 MySQL database 名称。
+- `CLIGREP_DB_USER` / `CLIGREP_DB_PASSWORD`：MySQL 登录凭据。
 - `CLIGREP_BUSYBOX_IMAGE` / `CLIGREP_PYTHON_IMAGE`：沙箱运行镜像。
 - `CLIGREP_CONTAINER_CPUS` / `CLIGREP_CONTAINER_MEMORY`：沙箱容器资源限制。
 - `CLIGREP_COMMAND_TIMEOUT_MS`：单次命令执行超时。
@@ -66,7 +74,7 @@ CLIGREP_CORS_ORIGIN=http://127.0.0.1:11801,http://localhost:11801,http://127.0.0
 ```text
 cligrep-server/
   build/cligrep-server
-  data/cligrep.db
+  scripts/mysql/init.sql
   logs/cligrep-server.log
   run/cligrep-server.pid
   .env
@@ -78,6 +86,15 @@ cp .env.example .env
 ./build.sh
 ./start.sh
 ```
+
+### 初始化 MySQL
+如需手工建库建表，可执行：
+
+```bash
+mysql -h 13.212.113.109 -P 3306 -u root -p < scripts/mysql/init.sql
+```
+
+应用启动时也会自动尝试创建 `cligrep` 数据库并初始化表结构；若当前账号没有建库权限，请先手工执行上面的 SQL。
 
 ### 前端联调
 - 前端开发模式默认通过 Vite 代理访问 `http://127.0.0.1:11802`。
@@ -100,6 +117,7 @@ curl http://127.0.0.1:11802/healthz
 
 `/healthz` 现在除了基础服务状态外，还会返回：
 - `sandboxReady`：宿主机沙箱是否可直接执行命令。
+- `databaseHost` / `databasePort` / `databaseName`：当前连接的 MySQL 信息。
 - `sandbox.dockerCli`：是否能在 `PATH` 中找到 Docker CLI。
 - `sandbox.dockerDaemon`：是否能连通本机 Docker daemon。
 - `sandbox.busyboxImage` / `sandbox.pythonImage`：所需镜像是否已在本地预拉取。
@@ -116,10 +134,13 @@ ps -p "$(cat run/cligrep-server.pid)"
 - 启动失败且日志提示端口冲突：检查 `11802` 是否已被其他进程占用，或修改 `CLIGREP_HTTP_ADDR`。
 - 页面跨域失败：确认 `CLIGREP_CORS_ORIGIN` 包含当前前端访问地址，并重新执行 `./stop.sh && ./start.sh`。
 - 执行命令失败：确认 Docker Engine 正常运行，且 `busybox:1.36.1` 与 `python:3.12-slim` 已预拉取。
-- 数据库路径异常：检查 `CLIGREP_DB_PATH` 所在目录是否可写，脚本会在启动前尝试创建父目录。
+- MySQL 连接失败：确认 `CLIGREP_DB_HOST`、`CLIGREP_DB_PORT`、`CLIGREP_DB_NAME`、`CLIGREP_DB_USER`、`CLIGREP_DB_PASSWORD` 正确，且应用账号具备目标库权限。
+- MySQL 表未创建：先执行 `scripts/mysql/init.sql`，再重启服务。
 
 推荐排查命令：
 ```bash
+mysql -h 13.212.113.109 -P 3306 -u cligrep -p -e "SHOW DATABASES;"
+mysql -h 13.212.113.109 -P 3306 -u cligrep -p -D cligrep -e "SHOW TABLES;"
 docker info
 docker image inspect busybox:1.36.1
 docker image inspect python:3.12-slim

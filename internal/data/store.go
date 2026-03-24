@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"os"
-	"path/filepath"
+	"net"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"github.com/go-sql-driver/mysql"
 
+	"github.com/linlay/cligrep-server/internal/config"
 	"github.com/linlay/cligrep-server/internal/models"
 )
 
@@ -20,30 +20,39 @@ type Store struct {
 	db *sql.DB
 }
 
-const cliSelectColumns = `
-	SELECT c.slug, c.display_name, c.summary, c.type, c.tags_json, c.help_text, c.version_text,
-	       c.popularity, c.runtime_image, c.enabled, c.example_line,
-	       c.environment_kind, c.source_type, c.author, c.github_url, c.gitee_url,
-	       c.license, c.created_at, c.original_command, c.executable,
-	       (SELECT COUNT(*) FROM favorites f WHERE f.cli_slug = c.slug) AS favorite_count,
-	       (SELECT COUNT(*) FROM comments m WHERE m.cli_slug = c.slug) AS comment_count,
-	       (SELECT COUNT(*) FROM execution_logs e WHERE e.cli_slug = c.slug) AS run_count
-	FROM clis c`
+const cliSelectList = `
+	SELECT c.SLUG_, c.DISPLAY_NAME_, c.SUMMARY_, c.TYPE_, c.TAGS_JSON_, c.HELP_TEXT_, c.VERSION_TEXT_,
+	       c.POPULARITY_, c.RUNTIME_IMAGE_, c.ENABLED_, c.EXAMPLE_LINE_,
+	       c.ENVIRONMENT_KIND_, c.SOURCE_TYPE_, c.AUTHOR_, c.GITHUB_URL_, c.GITEE_URL_,
+	       c.LICENSE_, c.CREATED_AT_, c.ORIGINAL_COMMAND_, c.EXECUTABLE_,
+	       (SELECT COUNT(*) FROM user_favorite f WHERE f.CLI_SLUG_ = c.SLUG_) AS FAVORITE_COUNT_,
+	       (SELECT COUNT(*) FROM user_comment m WHERE m.CLI_SLUG_ = c.SLUG_) AS COMMENT_COUNT_,
+	       (SELECT COUNT(*) FROM sandbox_execution_log e WHERE e.CLI_SLUG_ = c.SLUG_) AS RUN_COUNT_`
 
-func Open(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("create data directory: %w", err)
+func Open(ctx context.Context, cfg config.Config) (*Store, error) {
+	if err := ensureDatabase(ctx, cfg); err != nil {
+		return nil, err
 	}
 
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("mysql", mysqlDSN(cfg, true))
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite database: %w", err)
+		return nil, fmt.Errorf("open mysql database: %w", err)
 	}
-	db.SetMaxOpenConns(1)
-	db.SetMaxIdleConns(1)
+
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("ping mysql database: %w", err)
+	}
 
 	store := &Store{db: db}
-	if err := store.init(); err != nil {
+	if err := store.init(ctx); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -55,140 +64,40 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) init() error {
-	statements := []string{
-		`PRAGMA foreign_keys = ON;`,
-		`PRAGMA journal_mode = WAL;`,
-		`PRAGMA busy_timeout = 5000;`,
-		`CREATE TABLE IF NOT EXISTS clis (
-			slug TEXT PRIMARY KEY,
-			display_name TEXT NOT NULL,
-			summary TEXT NOT NULL,
-			type TEXT NOT NULL,
-			tags_json TEXT NOT NULL,
-			help_text TEXT NOT NULL,
-			version_text TEXT NOT NULL,
-			popularity INTEGER NOT NULL,
-			runtime_image TEXT NOT NULL,
-			enabled INTEGER NOT NULL DEFAULT 1,
-			example_line TEXT NOT NULL
-		);`,
-		`CREATE TABLE IF NOT EXISTS users (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			username TEXT NOT NULL UNIQUE,
-			ip TEXT NOT NULL,
-			created_at TEXT NOT NULL
-		);`,
-		`CREATE TABLE IF NOT EXISTS favorites (
-			user_id INTEGER NOT NULL,
-			cli_slug TEXT NOT NULL,
-			created_at TEXT NOT NULL,
-			PRIMARY KEY (user_id, cli_slug),
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-			FOREIGN KEY (cli_slug) REFERENCES clis(slug) ON DELETE CASCADE
-		);`,
-		`CREATE TABLE IF NOT EXISTS comments (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			cli_slug TEXT NOT NULL,
-			user_id INTEGER NOT NULL,
-			body TEXT NOT NULL,
-			created_at TEXT NOT NULL,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-			FOREIGN KEY (cli_slug) REFERENCES clis(slug) ON DELETE CASCADE
-		);`,
-		`CREATE TABLE IF NOT EXISTS execution_logs (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			user_id INTEGER,
-			cli_slug TEXT NOT NULL,
-			line TEXT NOT NULL,
-			mode TEXT NOT NULL,
-			stdout TEXT NOT NULL,
-			stderr TEXT NOT NULL,
-			exit_code INTEGER NOT NULL,
-			duration_ms INTEGER NOT NULL,
-			created_at TEXT NOT NULL,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
-		);`,
-		`CREATE TABLE IF NOT EXISTS generated_assets (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			kind TEXT NOT NULL,
-			name TEXT NOT NULL,
-			cli_slug TEXT,
-			user_id INTEGER,
-			content TEXT NOT NULL,
-			created_at TEXT NOT NULL,
-			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
-		);`,
-		`CREATE TABLE IF NOT EXISTS seed_execution_records (
-			seed_key TEXT PRIMARY KEY,
-			cli_slug TEXT NOT NULL,
-			created_at TEXT NOT NULL,
-			FOREIGN KEY (cli_slug) REFERENCES clis(slug) ON DELETE CASCADE
-		);`,
-	}
-
-	for _, statement := range statements {
-		if _, err := s.db.Exec(statement); err != nil {
-			return fmt.Errorf("initialize sqlite schema: %w", err)
+func (s *Store) init(ctx context.Context) error {
+	for _, statement := range mysqlSchemaStatements() {
+		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("initialize mysql schema: %w", err)
 		}
 	}
-
-	if err := s.ensureColumn("clis", "environment_kind", "TEXT NOT NULL DEFAULT 'SANDBOX'"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn("clis", "source_type", "TEXT NOT NULL DEFAULT 'unknown'"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn("clis", "author", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn("clis", "github_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn("clis", "gitee_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn("clis", "license", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn("clis", "created_at", "TEXT NOT NULL DEFAULT '2026-01-01T00:00:00Z'"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn("clis", "original_command", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return err
-	}
-	if err := s.ensureColumn("clis", "executable", "INTEGER NOT NULL DEFAULT 1"); err != nil {
-		return err
-	}
-
 	return nil
 }
 
 func (s *Store) SeedCLIs(ctx context.Context, clis []models.CLI) error {
-	query := `INSERT INTO clis
-		(slug, display_name, summary, type, tags_json, help_text, version_text, popularity, runtime_image, enabled, example_line,
-		 environment_kind, source_type, author, github_url, gitee_url, license, created_at, original_command, executable)
+	query := `INSERT INTO cli_registry
+		(SLUG_, DISPLAY_NAME_, SUMMARY_, TYPE_, TAGS_JSON_, HELP_TEXT_, VERSION_TEXT_, POPULARITY_, RUNTIME_IMAGE_, ENABLED_, EXAMPLE_LINE_,
+		 ENVIRONMENT_KIND_, SOURCE_TYPE_, AUTHOR_, GITHUB_URL_, GITEE_URL_, LICENSE_, CREATED_AT_, ORIGINAL_COMMAND_, EXECUTABLE_)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(slug) DO UPDATE SET
-			display_name=excluded.display_name,
-			summary=excluded.summary,
-			type=excluded.type,
-			tags_json=excluded.tags_json,
-			help_text=excluded.help_text,
-			version_text=excluded.version_text,
-			popularity=excluded.popularity,
-			runtime_image=excluded.runtime_image,
-			enabled=excluded.enabled,
-			example_line=excluded.example_line,
-			environment_kind=excluded.environment_kind,
-			source_type=excluded.source_type,
-			author=excluded.author,
-			github_url=excluded.github_url,
-			gitee_url=excluded.gitee_url,
-			license=excluded.license,
-			created_at=excluded.created_at,
-			original_command=excluded.original_command,
-			executable=excluded.executable`
+		ON DUPLICATE KEY UPDATE
+			DISPLAY_NAME_ = VALUES(DISPLAY_NAME_),
+			SUMMARY_ = VALUES(SUMMARY_),
+			TYPE_ = VALUES(TYPE_),
+			TAGS_JSON_ = VALUES(TAGS_JSON_),
+			HELP_TEXT_ = VALUES(HELP_TEXT_),
+			VERSION_TEXT_ = VALUES(VERSION_TEXT_),
+			POPULARITY_ = VALUES(POPULARITY_),
+			RUNTIME_IMAGE_ = VALUES(RUNTIME_IMAGE_),
+			ENABLED_ = VALUES(ENABLED_),
+			EXAMPLE_LINE_ = VALUES(EXAMPLE_LINE_),
+			ENVIRONMENT_KIND_ = VALUES(ENVIRONMENT_KIND_),
+			SOURCE_TYPE_ = VALUES(SOURCE_TYPE_),
+			AUTHOR_ = VALUES(AUTHOR_),
+			GITHUB_URL_ = VALUES(GITHUB_URL_),
+			GITEE_URL_ = VALUES(GITEE_URL_),
+			LICENSE_ = VALUES(LICENSE_),
+			CREATED_AT_ = VALUES(CREATED_AT_),
+			ORIGINAL_COMMAND_ = VALUES(ORIGINAL_COMMAND_),
+			EXECUTABLE_ = VALUES(EXECUTABLE_)`
 
 	for _, cli := range clis {
 		tagsJSON, err := json.Marshal(cli.Tags)
@@ -206,7 +115,7 @@ func (s *Store) SeedCLIs(ctx context.Context, clis []models.CLI) error {
 			cli.VersionText,
 			cli.Popularity,
 			cli.RuntimeImage,
-			boolToInt(cli.Enabled),
+			cli.Enabled,
 			cli.ExampleLine,
 			cli.EnvironmentKind,
 			cli.SourceType,
@@ -214,9 +123,9 @@ func (s *Store) SeedCLIs(ctx context.Context, clis []models.CLI) error {
 			cli.GitHubURL,
 			cli.GiteeURL,
 			cli.License,
-			cli.CreatedAt.UTC().Format(time.RFC3339),
+			cli.CreatedAt.UTC(),
 			cli.OriginalCommand,
-			boolToInt(cli.Executable),
+			cli.Executable,
 		); err != nil {
 			return fmt.Errorf("seed cli %s: %w", cli.Slug, err)
 		}
@@ -237,9 +146,10 @@ func (s *Store) ListHomepageCLIs(ctx context.Context, sort string, limit int) ([
 
 	rows, err := s.db.QueryContext(ctx,
 		fmt.Sprintf(`%s
-		WHERE c.enabled = 1 AND c.environment_kind != 'WEBSITE'
+		FROM cli_registry c
+		WHERE c.ENABLED_ = 1 AND c.ENVIRONMENT_KIND_ != 'WEBSITE'
 		ORDER BY %s
-		LIMIT ?`, cliSelectColumns, homepageSortOrder(sort)),
+		LIMIT ?`, cliSelectList, homepageSortOrder(sort)),
 		limit,
 	)
 	if err != nil {
@@ -257,8 +167,8 @@ func (s *Store) ListHomepageCLIs(ctx context.Context, sort string, limit int) ([
 func (s *Store) CountHomepageCLIs(ctx context.Context) (int, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM clis
-		WHERE enabled = 1 AND environment_kind != 'WEBSITE'`)
+		FROM cli_registry
+		WHERE ENABLED_ = 1 AND ENVIRONMENT_KIND_ != 'WEBSITE'`)
 	var total int
 	if err := row.Scan(&total); err != nil {
 		return 0, fmt.Errorf("count homepage clis: %w", err)
@@ -273,19 +183,20 @@ func (s *Store) SearchCLIs(ctx context.Context, query string, limit int) ([]mode
 
 	pattern := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`%s
-		WHERE c.enabled = 1
+		FROM cli_registry c
+		WHERE c.ENABLED_ = 1
 		  AND (
-			  LOWER(c.slug) LIKE ?
-			  OR LOWER(c.display_name) LIKE ?
-			  OR LOWER(c.summary) LIKE ?
-			  OR LOWER(c.help_text) LIKE ?
-			  OR LOWER(c.tags_json) LIKE ?
+			  LOWER(c.SLUG_) LIKE ?
+			  OR LOWER(c.DISPLAY_NAME_) LIKE ?
+			  OR LOWER(c.SUMMARY_) LIKE ?
+			  OR LOWER(c.HELP_TEXT_) LIKE ?
+			  OR LOWER(CAST(c.TAGS_JSON_ AS CHAR)) LIKE ?
 		  )
 		ORDER BY
-			CASE WHEN c.type = 'builtin' THEN 0 ELSE 1 END,
-			(SELECT COUNT(*) FROM favorites f WHERE f.cli_slug = c.slug) DESC,
-			c.display_name ASC
-		LIMIT ?`, cliSelectColumns), pattern, pattern, pattern, pattern, pattern, limit)
+			CASE WHEN c.TYPE_ = 'builtin' THEN 0 ELSE 1 END,
+			(SELECT COUNT(*) FROM user_favorite f WHERE f.CLI_SLUG_ = c.SLUG_) DESC,
+			c.DISPLAY_NAME_ ASC
+		LIMIT ?`, cliSelectList), pattern, pattern, pattern, pattern, pattern, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search clis: %w", err)
 	}
@@ -296,8 +207,8 @@ func (s *Store) SearchCLIs(ctx context.Context, query string, limit int) ([]mode
 
 func (s *Store) GetCLI(ctx context.Context, slug string) (models.CLI, error) {
 	row := s.db.QueryRowContext(ctx, fmt.Sprintf(`%s
-		WHERE c.slug = ? AND c.enabled = 1`, cliSelectColumns), slug)
-
+		FROM cli_registry c
+		WHERE c.SLUG_ = ? AND c.ENABLED_ = 1`, cliSelectList), slug)
 	return scanCLI(row)
 }
 
@@ -308,21 +219,21 @@ func (s *Store) LoginMock(ctx context.Context, username string) (models.User, er
 	}
 
 	ip := generateMockIP(username)
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC()
 
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO users (username, ip, created_at)
+		INSERT INTO auth_user (USERNAME_, IP_, CREATED_AT_)
 		VALUES (?, ?, ?)
-		ON CONFLICT(username) DO UPDATE SET ip=excluded.ip`, username, ip, now); err != nil {
+		ON DUPLICATE KEY UPDATE IP_ = VALUES(IP_)`, username, ip, now); err != nil {
 		return models.User{}, fmt.Errorf("upsert mock user: %w", err)
 	}
 
-	row := s.db.QueryRowContext(ctx, `SELECT id, username, ip, created_at FROM users WHERE username = ?`, username)
+	row := s.db.QueryRowContext(ctx, `SELECT ID_, USERNAME_, IP_, CREATED_AT_ FROM auth_user WHERE USERNAME_ = ?`, username)
 	return scanUser(row)
 }
 
 func (s *Store) GetUser(ctx context.Context, userID int64) (models.User, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, username, ip, created_at FROM users WHERE id = ?`, userID)
+	row := s.db.QueryRowContext(ctx, `SELECT ID_, USERNAME_, IP_, CREATED_AT_ FROM auth_user WHERE ID_ = ?`, userID)
 	return scanUser(row)
 }
 
@@ -341,10 +252,9 @@ func (s *Store) SeedFavoritesByUsername(ctx context.Context, username, cliSlug s
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO favorites (user_id, cli_slug, created_at)
-		VALUES (?, ?, ?)
-		ON CONFLICT(user_id, cli_slug) DO NOTHING`,
-		user.ID, cliSlug, time.Now().UTC().Format(time.RFC3339),
+		INSERT IGNORE INTO user_favorite (USER_ID_, CLI_SLUG_, CREATED_AT_)
+		VALUES (?, ?, ?)`,
+		user.ID, cliSlug, time.Now().UTC(),
 	); err != nil {
 		return fmt.Errorf("seed favorite %s/%s: %w", username, cliSlug, err)
 	}
@@ -353,10 +263,9 @@ func (s *Store) SeedFavoritesByUsername(ctx context.Context, username, cliSlug s
 
 func (s *Store) SeedExecutionLog(ctx context.Context, seedKey, cliSlug, line, mode string, durationMS int64, createdAt time.Time) error {
 	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO seed_execution_records (seed_key, cli_slug, created_at)
-		VALUES (?, ?, ?)
-		ON CONFLICT(seed_key) DO NOTHING`,
-		seedKey, cliSlug, createdAt.UTC().Format(time.RFC3339),
+		INSERT IGNORE INTO seed_execution_record (SEED_KEY_, CLI_SLUG_, CREATED_AT_)
+		VALUES (?, ?, ?)`,
+		seedKey, cliSlug, createdAt.UTC(),
 	)
 	if err != nil {
 		return fmt.Errorf("seed execution marker %s: %w", seedKey, err)
@@ -371,9 +280,9 @@ func (s *Store) SeedExecutionLog(ctx context.Context, seedKey, cliSlug, line, mo
 	}
 
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO execution_logs (user_id, cli_slug, line, mode, stdout, stderr, exit_code, duration_ms, created_at)
+		INSERT INTO sandbox_execution_log (USER_ID_, CLI_SLUG_, LINE_, MODE_, STDOUT_, STDERR_, EXIT_CODE_, DURATION_MS_, CREATED_AT_)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		nil, cliSlug, line, mode, "seeded execution", "", 0, durationMS, createdAt.UTC().Format(time.RFC3339),
+		nil, cliSlug, line, mode, "seeded execution", "", 0, durationMS, createdAt.UTC(),
 	)
 	if err != nil {
 		return fmt.Errorf("seed execution log %s: %w", seedKey, err)
@@ -384,10 +293,9 @@ func (s *Store) SeedExecutionLog(ctx context.Context, seedKey, cliSlug, line, mo
 func (s *Store) SetFavorite(ctx context.Context, mutation models.FavoriteMutation) error {
 	if mutation.Active {
 		_, err := s.db.ExecContext(ctx, `
-			INSERT INTO favorites (user_id, cli_slug, created_at)
-			VALUES (?, ?, ?)
-			ON CONFLICT(user_id, cli_slug) DO NOTHING`,
-			mutation.UserID, mutation.CLISlug, time.Now().UTC().Format(time.RFC3339),
+			INSERT IGNORE INTO user_favorite (USER_ID_, CLI_SLUG_, CREATED_AT_)
+			VALUES (?, ?, ?)`,
+			mutation.UserID, mutation.CLISlug, time.Now().UTC(),
 		)
 		if err != nil {
 			return fmt.Errorf("set favorite: %w", err)
@@ -395,7 +303,7 @@ func (s *Store) SetFavorite(ctx context.Context, mutation models.FavoriteMutatio
 		return nil
 	}
 
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM favorites WHERE user_id = ? AND cli_slug = ?`, mutation.UserID, mutation.CLISlug); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM user_favorite WHERE USER_ID_ = ? AND CLI_SLUG_ = ?`, mutation.UserID, mutation.CLISlug); err != nil {
 		return fmt.Errorf("remove favorite: %w", err)
 	}
 	return nil
@@ -403,10 +311,10 @@ func (s *Store) SetFavorite(ctx context.Context, mutation models.FavoriteMutatio
 
 func (s *Store) ListFavorites(ctx context.Context, userID int64) ([]models.CLI, error) {
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`%s
-		FROM favorites f
-		JOIN clis c ON c.slug = f.cli_slug
-		WHERE f.user_id = ?
-		ORDER BY f.created_at DESC`, cliSelectColumns), userID)
+		FROM user_favorite f
+		JOIN cli_registry c ON c.SLUG_ = f.CLI_SLUG_
+		WHERE f.USER_ID_ = ?
+		ORDER BY f.CREATED_AT_ DESC`, cliSelectList), userID)
 	if err != nil {
 		return nil, fmt.Errorf("list favorites: %w", err)
 	}
@@ -417,9 +325,9 @@ func (s *Store) ListFavorites(ctx context.Context, userID int64) ([]models.CLI, 
 
 func (s *Store) AddComment(ctx context.Context, mutation models.CommentMutation) (models.Comment, error) {
 	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO comments (cli_slug, user_id, body, created_at)
+		INSERT INTO user_comment (CLI_SLUG_, USER_ID_, BODY_, CREATED_AT_)
 		VALUES (?, ?, ?, ?)`,
-		mutation.CLISlug, mutation.UserID, strings.TrimSpace(mutation.Body), time.Now().UTC().Format(time.RFC3339),
+		mutation.CLISlug, mutation.UserID, strings.TrimSpace(mutation.Body), time.Now().UTC(),
 	)
 	if err != nil {
 		return models.Comment{}, fmt.Errorf("insert comment: %w", err)
@@ -431,20 +339,20 @@ func (s *Store) AddComment(ctx context.Context, mutation models.CommentMutation)
 	}
 
 	row := s.db.QueryRowContext(ctx, `
-		SELECT c.id, c.cli_slug, c.user_id, u.username, c.body, c.created_at
-		FROM comments c
-		JOIN users u ON u.id = c.user_id
-		WHERE c.id = ?`, commentID)
+		SELECT c.ID_, c.CLI_SLUG_, c.USER_ID_, u.USERNAME_, c.BODY_, c.CREATED_AT_
+		FROM user_comment c
+		JOIN auth_user u ON u.ID_ = c.USER_ID_
+		WHERE c.ID_ = ?`, commentID)
 	return scanComment(row)
 }
 
 func (s *Store) ListComments(ctx context.Context, cliSlug string) ([]models.Comment, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.id, c.cli_slug, c.user_id, u.username, c.body, c.created_at
-		FROM comments c
-		JOIN users u ON u.id = c.user_id
-		WHERE c.cli_slug = ?
-		ORDER BY c.created_at DESC
+		SELECT c.ID_, c.CLI_SLUG_, c.USER_ID_, u.USERNAME_, c.BODY_, c.CREATED_AT_
+		FROM user_comment c
+		JOIN auth_user u ON u.ID_ = c.USER_ID_
+		WHERE c.CLI_SLUG_ = ?
+		ORDER BY c.CREATED_AT_ DESC
 		LIMIT 24`, cliSlug)
 	if err != nil {
 		return nil, fmt.Errorf("list comments: %w", err)
@@ -465,9 +373,9 @@ func (s *Store) ListComments(ctx context.Context, cliSlug string) ([]models.Comm
 func (s *Store) SaveAsset(ctx context.Context, asset models.GeneratedAsset) (models.GeneratedAsset, error) {
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx, `
-		INSERT INTO generated_assets (kind, name, cli_slug, user_id, content, created_at)
+		INSERT INTO sandbox_generated_asset (KIND_, NAME_, CLI_SLUG_, USER_ID_, CONTENT_, CREATED_AT_)
 		VALUES (?, ?, ?, ?, ?, ?)`,
-		asset.Kind, asset.Name, asset.CLISlug, asset.UserID, asset.Content, now.Format(time.RFC3339),
+		asset.Kind, asset.Name, nullableString(asset.CLISlug), asset.UserID, asset.Content, now,
 	)
 	if err != nil {
 		return models.GeneratedAsset{}, fmt.Errorf("insert generated asset: %w", err)
@@ -485,9 +393,9 @@ func (s *Store) SaveAsset(ctx context.Context, asset models.GeneratedAsset) (mod
 
 func (s *Store) LogExecution(ctx context.Context, userID *int64, cliSlug, line, mode string, result models.ExecutionResult) error {
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO execution_logs (user_id, cli_slug, line, mode, stdout, stderr, exit_code, duration_ms, created_at)
+		INSERT INTO sandbox_execution_log (USER_ID_, CLI_SLUG_, LINE_, MODE_, STDOUT_, STDERR_, EXIT_CODE_, DURATION_MS_, CREATED_AT_)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		userID, cliSlug, line, mode, result.Stdout, result.Stderr, result.ExitCode, result.DurationMS, time.Now().UTC().Format(time.RFC3339),
+		userID, cliSlug, line, mode, result.Stdout, result.Stderr, result.ExitCode, result.DurationMS, time.Now().UTC(),
 	)
 	if err != nil {
 		return fmt.Errorf("insert execution log: %w", err)
@@ -513,11 +421,11 @@ type scanner interface {
 
 func scanCLI(row scanner) (models.CLI, error) {
 	var (
-		cli          models.CLI
-		tagsRaw      string
-		enabled      int
-		executable   int
-		createdAtRaw string
+		cli        models.CLI
+		tagsRaw    []byte
+		enabled    bool
+		executable bool
+		createdAt  time.Time
 	)
 
 	if err := row.Scan(
@@ -538,7 +446,7 @@ func scanCLI(row scanner) (models.CLI, error) {
 		&cli.GitHubURL,
 		&cli.GiteeURL,
 		&cli.License,
-		&createdAtRaw,
+		&createdAt,
 		&cli.OriginalCommand,
 		&executable,
 		&cli.FavoriteCount,
@@ -548,58 +456,38 @@ func scanCLI(row scanner) (models.CLI, error) {
 		return models.CLI{}, err
 	}
 
-	if err := json.Unmarshal([]byte(tagsRaw), &cli.Tags); err != nil {
+	if err := json.Unmarshal(tagsRaw, &cli.Tags); err != nil {
 		return models.CLI{}, fmt.Errorf("unmarshal cli tags: %w", err)
 	}
 
-	createdAt, err := time.Parse(time.RFC3339, createdAtRaw)
-	if err != nil {
-		return models.CLI{}, fmt.Errorf("parse cli created timestamp: %w", err)
-	}
-
-	cli.Enabled = enabled == 1
-	cli.Executable = executable == 1
-	cli.CreatedAt = createdAt
+	cli.Enabled = enabled
+	cli.Executable = executable
+	cli.CreatedAt = createdAt.UTC()
 	return cli, nil
 }
 
 func scanUser(row scanner) (models.User, error) {
 	var (
-		user       models.User
-		createdRaw string
+		user      models.User
+		createdAt time.Time
 	)
-	if err := row.Scan(&user.ID, &user.Username, &user.IP, &createdRaw); err != nil {
+	if err := row.Scan(&user.ID, &user.Username, &user.IP, &createdAt); err != nil {
 		return models.User{}, err
 	}
-	parsed, err := time.Parse(time.RFC3339, createdRaw)
-	if err != nil {
-		return models.User{}, fmt.Errorf("parse user timestamp: %w", err)
-	}
-	user.CreatedAt = parsed
+	user.CreatedAt = createdAt.UTC()
 	return user, nil
 }
 
 func scanComment(row scanner) (models.Comment, error) {
 	var (
-		comment    models.Comment
-		createdRaw string
+		comment   models.Comment
+		createdAt time.Time
 	)
-	if err := row.Scan(&comment.ID, &comment.CLISlug, &comment.UserID, &comment.Username, &comment.Body, &createdRaw); err != nil {
+	if err := row.Scan(&comment.ID, &comment.CLISlug, &comment.UserID, &comment.Username, &comment.Body, &createdAt); err != nil {
 		return models.Comment{}, err
 	}
-	parsed, err := time.Parse(time.RFC3339, createdRaw)
-	if err != nil {
-		return models.Comment{}, fmt.Errorf("parse comment timestamp: %w", err)
-	}
-	comment.CreatedAt = parsed
+	comment.CreatedAt = createdAt.UTC()
 	return comment, nil
-}
-
-func boolToInt(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
 }
 
 func generateMockIP(username string) string {
@@ -609,45 +497,162 @@ func generateMockIP(username string) string {
 	return fmt.Sprintf("10.24.%d.%d", (sum>>8)&0xff, sum&0xff)
 }
 
-func (s *Store) ensureColumn(tableName, columnName, definition string) error {
-	rows, err := s.db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, tableName))
+func ensureDatabase(ctx context.Context, cfg config.Config) error {
+	db, err := sql.Open("mysql", mysqlDSN(cfg, false))
 	if err != nil {
-		return fmt.Errorf("inspect sqlite columns for %s: %w", tableName, err)
+		return fmt.Errorf("open mysql server connection: %w", err)
 	}
-	defer rows.Close()
+	defer db.Close()
 
-	for rows.Next() {
-		var (
-			cid        int
-			name       string
-			columnType string
-			notNull    int
-			defaultVal sql.NullString
-			pk         int
-		)
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &pk); err != nil {
-			return fmt.Errorf("scan sqlite table_info for %s: %w", tableName, err)
-		}
-		if name == columnName {
-			return nil
-		}
+	createCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if err := db.PingContext(createCtx); err != nil {
+		return fmt.Errorf("ping mysql server: %w", err)
 	}
 
-	if _, err := s.db.Exec(fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, tableName, columnName, definition)); err != nil {
-		return fmt.Errorf("add column %s.%s: %w", tableName, columnName, err)
+	if _, err := db.ExecContext(createCtx, createDatabaseStatement(cfg.DBName)); err != nil {
+		return fmt.Errorf("create database %s: %w", cfg.DBName, err)
 	}
+
 	return nil
+}
+
+func createDatabaseStatement(name string) string {
+	return fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", quoteIdentifier(name))
+}
+
+func mysqlDSN(cfg config.Config, withDatabase bool) string {
+	driverCfg := mysql.NewConfig()
+	driverCfg.User = cfg.DBUser
+	driverCfg.Passwd = cfg.DBPassword
+	driverCfg.Net = "tcp"
+	driverCfg.Addr = net.JoinHostPort(cfg.DBHost, fmt.Sprintf("%d", cfg.DBPort))
+	driverCfg.Params = map[string]string{
+		"charset": "utf8mb4",
+	}
+	driverCfg.Collation = "utf8mb4_unicode_ci"
+	driverCfg.ParseTime = true
+	if withDatabase {
+		driverCfg.DBName = cfg.DBName
+	}
+	return driverCfg.FormatDSN()
+}
+
+func mysqlSchemaStatements() []string {
+	return []string{
+		`CREATE TABLE IF NOT EXISTS cli_registry (
+			SLUG_ VARCHAR(128) NOT NULL,
+			DISPLAY_NAME_ VARCHAR(255) NOT NULL,
+			SUMMARY_ TEXT NOT NULL,
+			TYPE_ VARCHAR(64) NOT NULL,
+			TAGS_JSON_ JSON NOT NULL,
+			HELP_TEXT_ MEDIUMTEXT NOT NULL,
+			VERSION_TEXT_ VARCHAR(255) NOT NULL,
+			POPULARITY_ INT NOT NULL,
+			RUNTIME_IMAGE_ VARCHAR(255) NOT NULL,
+			ENABLED_ TINYINT(1) NOT NULL DEFAULT 1,
+			EXAMPLE_LINE_ VARCHAR(512) NOT NULL,
+			ENVIRONMENT_KIND_ VARCHAR(32) NOT NULL,
+			SOURCE_TYPE_ VARCHAR(64) NOT NULL,
+			AUTHOR_ VARCHAR(255) NOT NULL DEFAULT '',
+			GITHUB_URL_ VARCHAR(512) NOT NULL DEFAULT '',
+			GITEE_URL_ VARCHAR(512) NOT NULL DEFAULT '',
+			LICENSE_ VARCHAR(128) NOT NULL DEFAULT '',
+			CREATED_AT_ DATETIME(3) NOT NULL,
+			ORIGINAL_COMMAND_ VARCHAR(512) NOT NULL DEFAULT '',
+			EXECUTABLE_ TINYINT(1) NOT NULL DEFAULT 1,
+			PRIMARY KEY (SLUG_),
+			KEY IDX_CLI_REGISTRY_ENABLED_ENV_TYPE (ENABLED_, ENVIRONMENT_KIND_, TYPE_)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS auth_user (
+			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			USERNAME_ VARCHAR(128) NOT NULL,
+			IP_ VARCHAR(64) NOT NULL,
+			CREATED_AT_ DATETIME(3) NOT NULL,
+			PRIMARY KEY (ID_),
+			UNIQUE KEY UK_AUTH_USER_USERNAME (USERNAME_)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS user_favorite (
+			USER_ID_ BIGINT UNSIGNED NOT NULL,
+			CLI_SLUG_ VARCHAR(128) NOT NULL,
+			CREATED_AT_ DATETIME(3) NOT NULL,
+			PRIMARY KEY (USER_ID_, CLI_SLUG_),
+			KEY IDX_USER_FAVORITE_USER_CREATED (USER_ID_, CREATED_AT_),
+			CONSTRAINT FK_USER_FAVORITE_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE CASCADE,
+			CONSTRAINT FK_USER_FAVORITE_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS user_comment (
+			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			CLI_SLUG_ VARCHAR(128) NOT NULL,
+			USER_ID_ BIGINT UNSIGNED NOT NULL,
+			BODY_ TEXT NOT NULL,
+			CREATED_AT_ DATETIME(3) NOT NULL,
+			PRIMARY KEY (ID_),
+			KEY IDX_USER_COMMENT_CLI_CREATED (CLI_SLUG_, CREATED_AT_),
+			KEY IDX_USER_COMMENT_USER_CREATED (USER_ID_, CREATED_AT_),
+			CONSTRAINT FK_USER_COMMENT_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE CASCADE,
+			CONSTRAINT FK_USER_COMMENT_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS sandbox_execution_log (
+			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			USER_ID_ BIGINT UNSIGNED NULL,
+			CLI_SLUG_ VARCHAR(128) NOT NULL,
+			LINE_ TEXT NOT NULL,
+			MODE_ VARCHAR(64) NOT NULL,
+			STDOUT_ MEDIUMTEXT NOT NULL,
+			STDERR_ MEDIUMTEXT NOT NULL,
+			EXIT_CODE_ INT NOT NULL,
+			DURATION_MS_ BIGINT NOT NULL,
+			CREATED_AT_ DATETIME(3) NOT NULL,
+			PRIMARY KEY (ID_),
+			KEY IDX_SANDBOX_EXECUTION_LOG_CLI_CREATED (CLI_SLUG_, CREATED_AT_),
+			CONSTRAINT FK_SANDBOX_EXECUTION_LOG_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE SET NULL,
+			CONSTRAINT FK_SANDBOX_EXECUTION_LOG_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS sandbox_generated_asset (
+			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			KIND_ VARCHAR(64) NOT NULL,
+			NAME_ VARCHAR(255) NOT NULL,
+			CLI_SLUG_ VARCHAR(128) NULL,
+			USER_ID_ BIGINT UNSIGNED NULL,
+			CONTENT_ MEDIUMTEXT NOT NULL,
+			CREATED_AT_ DATETIME(3) NOT NULL,
+			PRIMARY KEY (ID_),
+			KEY IDX_SANDBOX_GENERATED_ASSET_KIND_CREATED (KIND_, CREATED_AT_),
+			CONSTRAINT FK_SANDBOX_GENERATED_ASSET_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE SET NULL,
+			CONSTRAINT FK_SANDBOX_GENERATED_ASSET_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE SET NULL
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS seed_execution_record (
+			SEED_KEY_ VARCHAR(128) NOT NULL,
+			CLI_SLUG_ VARCHAR(128) NOT NULL,
+			CREATED_AT_ DATETIME(3) NOT NULL,
+			PRIMARY KEY (SEED_KEY_),
+			CONSTRAINT FK_SEED_EXECUTION_RECORD_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	}
+}
+
+func quoteIdentifier(value string) string {
+	return "`" + strings.ReplaceAll(value, "`", "``") + "`"
+}
+
+func nullableString(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
 }
 
 func homepageSortOrder(sort string) string {
 	switch strings.ToLower(strings.TrimSpace(sort)) {
 	case "newest":
-		return "c.created_at DESC, c.display_name ASC"
+		return "c.CREATED_AT_ DESC, c.DISPLAY_NAME_ ASC"
 	case "runs":
-		return "(SELECT COUNT(*) FROM execution_logs e WHERE e.cli_slug = c.slug) DESC, c.display_name ASC"
+		return "(SELECT COUNT(*) FROM sandbox_execution_log e WHERE e.CLI_SLUG_ = c.SLUG_) DESC, c.DISPLAY_NAME_ ASC"
 	case "favorites", "":
-		return "(SELECT COUNT(*) FROM favorites f WHERE f.cli_slug = c.slug) DESC, c.display_name ASC"
+		return "(SELECT COUNT(*) FROM user_favorite f WHERE f.CLI_SLUG_ = c.SLUG_) DESC, c.DISPLAY_NAME_ ASC"
 	default:
-		return "(SELECT COUNT(*) FROM favorites f WHERE f.cli_slug = c.slug) DESC, c.display_name ASC"
+		return "(SELECT COUNT(*) FROM user_favorite f WHERE f.CLI_SLUG_ = c.SLUG_) DESC, c.DISPLAY_NAME_ ASC"
 	}
 }

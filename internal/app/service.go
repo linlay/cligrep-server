@@ -24,7 +24,7 @@ type App struct {
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
-	store, err := data.Open(cfg.DatabasePath)
+	store, err := data.Open(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,9 @@ func (a *App) Health(ctx context.Context) map[string]any {
 		"status":            "ok",
 		"busyboxImage":      a.cfg.BusyBoxImage,
 		"pythonImage":       a.cfg.PythonImage,
-		"databasePath":      a.cfg.DatabasePath,
+		"databaseHost":      a.cfg.DBHost,
+		"databasePort":      a.cfg.DBPort,
+		"databaseName":      a.cfg.DBName,
 		"timestamp":         time.Now().UTC().Format(time.RFC3339),
 		"commandTimeoutMs":  a.cfg.CommandTimeout.Milliseconds(),
 		"singleLineOnly":    true,

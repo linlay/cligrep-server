@@ -32,13 +32,6 @@ if [ -f "$ENV_FILE" ]; then
   set +a
 fi
 
-DB_PATH=${CLIGREP_DB_PATH:-"$ROOT_DIR/data/cligrep.db"}
-case "$DB_PATH" in
-  /*) DB_DIR=$(dirname "$DB_PATH") ;;
-  *) DB_DIR=$(dirname "$ROOT_DIR/$DB_PATH") ;;
-esac
-mkdir -p "$DB_DIR"
-
 cd "$ROOT_DIR"
 nohup "$BIN_PATH" >>"$LOG_FILE" 2>&1 &
 PID=$!
