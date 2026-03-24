@@ -1,5 +1,3 @@
-# local data
-/data/
 build/
 package-lock.json
 .env
