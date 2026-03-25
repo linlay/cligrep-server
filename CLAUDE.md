@@ -58,10 +58,10 @@
 - `GET/POST /api/v1/comments`：读取或新增评论。
 
 ## 7. 开发要点
-- 配置全部来自环境变量，`.env.example` 是契约文件，`.env` 是本地真实值。
+- 配置全部来自环境变量，`.env.example` 是公开契约文件，`.env` 是本地真实值。
 - `CLIGREP_CORS_ORIGIN` 现在直接作用于 HTTP 中间件，支持 `*` 或逗号分隔多个 origin。
-- 数据库配置使用 `CLIGREP_DB_HOST`、`CLIGREP_DB_PORT`、`CLIGREP_DB_NAME`、`CLIGREP_DB_USER`、`CLIGREP_DB_PASSWORD`。
-- 应用启动时会尝试创建 `cligrep` 数据库并自动初始化 MySQL 表结构；如账号缺少建库权限，先执行 `scripts/mysql/init.sql`。
+- 数据库配置使用 `CLIGREP_DB_HOST`、`CLIGREP_DB_PORT`、`CLIGREP_DB_NAME`、`CLIGREP_DB_USER`、`CLIGREP_DB_PASSWORD`，且这些值必须在 `.env` 中显式提供。
+- 应用启动时会尝试创建 `CLIGREP_DB_NAME` 指定的数据库并自动初始化 MySQL 表结构；如账号缺少建库权限，先执行 `scripts/mysql/init.sql`，并在执行前替换脚本中的占位密码。
 - 沙箱执行依赖宿主机 Docker，服务本身不容器化。
 - 服务启动时会主动探测 Docker CLI、Docker daemon、BusyBox 镜像、Python 镜像；若未就绪，只打印一次 warning，不阻止 HTTP 服务启动。
 - 运行脚本以仓库内目录为默认目标：`build/`、`logs/`、`run/`。
@@ -92,6 +92,6 @@
 ## 11. 数据库排障
 - 先确认 `.env` 中 MySQL 配置与实际一致，再执行 `scripts/mysql/init.sql` 建库建表。
 - 常用命令：
-  - `mysql -h 13.212.113.109 -P 3306 -u cligrep -p -e "SHOW DATABASES;"`
-  - `mysql -h 13.212.113.109 -P 3306 -u cligrep -p -D cligrep -e "SHOW TABLES;"`
-  - `mysql -h 13.212.113.109 -P 3306 -u cligrep -p -D cligrep -e "SHOW CREATE TABLE cli_registry\G"`
+  - `mysql -h <db-host> -P <db-port> -u <db-user> -p -e "SHOW DATABASES;"`
+  - `mysql -h <db-host> -P <db-port> -u <db-user> -p -D <db-name> -e "SHOW TABLES;"`
+  - `mysql -h <db-host> -P <db-port> -u <db-user> -p -D <db-name> -e "SHOW CREATE TABLE cli_registry\G"`

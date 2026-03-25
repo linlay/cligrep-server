@@ -201,14 +201,14 @@ func (s *Store) RegisterLocal(ctx context.Context, request models.LocalRegisterR
 
 	userIDCopy := userID
 	if err := insertAuthAttemptWithExecer(ctx, tx, models.AuthLoginLog{
-		UserID:       &userIDCopy,
-		Username:     username,
-		DisplayName:  displayName,
-		AuthMethod:   models.AuthMethodLocalPassword,
-		LoginResult:  models.AuthResultSuccess,
-		IP:           strings.TrimSpace(metadata.IP),
-		UserAgent:    strings.TrimSpace(metadata.UserAgent),
-		LoginAt:      now,
+		UserID:      &userIDCopy,
+		Username:    username,
+		DisplayName: displayName,
+		AuthMethod:  models.AuthMethodLocalPassword,
+		LoginResult: models.AuthResultSuccess,
+		IP:          strings.TrimSpace(metadata.IP),
+		UserAgent:   strings.TrimSpace(metadata.UserAgent),
+		LoginAt:     now,
 	}); err != nil {
 		return models.User{}, "", err
 	}
@@ -322,14 +322,14 @@ func (s *Store) LoginLocal(ctx context.Context, request models.LocalLoginRequest
 
 	userIDCopy := user.ID
 	if err := insertAuthAttemptWithExecer(ctx, tx, models.AuthLoginLog{
-		UserID:       &userIDCopy,
-		Username:     user.Username,
-		DisplayName:  user.DisplayName,
-		AuthMethod:   models.AuthMethodLocalPassword,
-		LoginResult:  models.AuthResultSuccess,
-		IP:           strings.TrimSpace(metadata.IP),
-		UserAgent:    strings.TrimSpace(metadata.UserAgent),
-		LoginAt:      now,
+		UserID:      &userIDCopy,
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
+		AuthMethod:  models.AuthMethodLocalPassword,
+		LoginResult: models.AuthResultSuccess,
+		IP:          strings.TrimSpace(metadata.IP),
+		UserAgent:   strings.TrimSpace(metadata.UserAgent),
+		LoginAt:     now,
 	}); err != nil {
 		return models.User{}, "", err
 	}

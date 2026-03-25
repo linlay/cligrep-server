@@ -11,11 +11,11 @@ import (
 
 func TestMySQLDSNIncludesConfiguredDatabase(t *testing.T) {
 	cfg := config.Config{
-		DBHost:     "13.212.113.109",
+		DBHost:     "db.example.internal",
 		DBPort:     3306,
-		DBName:     "cligrep",
-		DBUser:     "cligrep",
-		DBPassword: "cligrep0@123",
+		DBName:     "app_database",
+		DBUser:     "app_user",
+		DBPassword: "example-password",
 	}
 
 	dsn := mysqlDSN(cfg, true)
@@ -24,17 +24,17 @@ func TestMySQLDSNIncludesConfiguredDatabase(t *testing.T) {
 		t.Fatalf("parse dsn: %v", err)
 	}
 
-	if parsed.DBName != "cligrep" {
-		t.Fatalf("expected db name cligrep, got %q", parsed.DBName)
+	if parsed.DBName != "app_database" {
+		t.Fatalf("expected db name app_database, got %q", parsed.DBName)
 	}
-	if parsed.User != "cligrep" {
-		t.Fatalf("expected user cligrep, got %q", parsed.User)
+	if parsed.User != "app_user" {
+		t.Fatalf("expected user app_user, got %q", parsed.User)
 	}
-	if parsed.Passwd != "cligrep0@123" {
+	if parsed.Passwd != "example-password" {
 		t.Fatalf("expected password to round-trip, got %q", parsed.Passwd)
 	}
-	if parsed.Addr != "13.212.113.109:3306" {
-		t.Fatalf("expected addr 13.212.113.109:3306, got %q", parsed.Addr)
+	if parsed.Addr != "db.example.internal:3306" {
+		t.Fatalf("expected addr db.example.internal:3306, got %q", parsed.Addr)
 	}
 	if !parsed.ParseTime {
 		t.Fatal("expected parseTime=true")

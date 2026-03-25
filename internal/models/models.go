@@ -166,20 +166,20 @@ const (
 )
 
 type AuthLoginLog struct {
-	UserID         *int64
-	Username       string
-	DisplayName    string
-	AuthMethod     AuthMethod
-	LoginResult    AuthResult
-	FailureReason  string
-	IP             string
-	UserAgent      string
-	LoginAt        time.Time
+	UserID        *int64
+	Username      string
+	DisplayName   string
+	AuthMethod    AuthMethod
+	LoginResult   AuthResult
+	FailureReason string
+	IP            string
+	UserAgent     string
+	LoginAt       time.Time
 }
 
 var (
-	ErrUnauthorized      = errors.New("unauthorized")
-	ErrAuthNotConfigured = errors.New("auth is not configured")
+	ErrUnauthorized       = errors.New("unauthorized")
+	ErrAuthNotConfigured  = errors.New("auth is not configured")
 	ErrInvalidCredentials = errors.New("invalid username or password")
 	ErrUsernameTaken      = errors.New("username is already taken")
 	ErrInvalidUsername    = errors.New("username must match [a-zA-Z0-9_.-]{3,32}")

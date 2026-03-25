@@ -25,7 +25,7 @@ cp .env.example .env
 ./start.sh
 ```
 
-服务默认监听 `http://127.0.0.1:11802`，并连接到 `13.212.113.109:3306/cligrep`。
+服务默认监听 `http://127.0.0.1:11802`。数据库连接配置需要在 `.env` 中显式填写，本仓库不再内置任何真实数据库地址或密码默认值。
 
 ### 停止服务
 ```bash
@@ -44,22 +44,22 @@ go test ./...
 
 ```dotenv
 CLIGREP_HTTP_ADDR=:11802
-CLIGREP_DB_HOST=13.212.113.109
+CLIGREP_DB_HOST=db.example.internal
 CLIGREP_DB_PORT=3306
-CLIGREP_DB_NAME=cligrep
-CLIGREP_DB_USER=cligrep
-CLIGREP_DB_PASSWORD=cligrep0@123
+CLIGREP_DB_NAME=app_database
+CLIGREP_DB_USER=app_user
+CLIGREP_DB_PASSWORD=replace-with-a-strong-password
 CLIGREP_BUSYBOX_IMAGE=busybox:1.36.1
 CLIGREP_PYTHON_IMAGE=python:3.12-slim
 CLIGREP_CONTAINER_CPUS=0.50
 CLIGREP_CONTAINER_MEMORY=128m
 CLIGREP_COMMAND_TIMEOUT_MS=4000
-CLIGREP_CORS_ORIGIN=http://127.0.0.1:11801,http://localhost:11801,http://127.0.0.1:5173,http://localhost:5173
+CLIGREP_CORS_ORIGIN=https://app.example.com,https://staging-app.example.com
 CLIGREP_AUTH_GOOGLE_CLIENT_ID=
 CLIGREP_AUTH_GOOGLE_CLIENT_SECRET=
-CLIGREP_AUTH_GOOGLE_REDIRECT_URL=http://127.0.0.1:11802/api/v1/auth/google/callback
-CLIGREP_AUTH_GOOGLE_SUCCESS_URL=http://127.0.0.1:11801/
-CLIGREP_AUTH_GOOGLE_FAILURE_URL=http://127.0.0.1:11801/login?error=google_oauth
+CLIGREP_AUTH_GOOGLE_REDIRECT_URL=https://api.example.com/api/v1/auth/google/callback
+CLIGREP_AUTH_GOOGLE_SUCCESS_URL=https://app.example.com/
+CLIGREP_AUTH_GOOGLE_FAILURE_URL=https://app.example.com/login?error=google_oauth
 CLIGREP_AUTH_SESSION_TTL_HOURS=168
 CLIGREP_AUTH_COOKIE_NAME=cligrep_session
 CLIGREP_AUTH_COOKIE_SECURE=false
@@ -69,16 +69,16 @@ CLIGREP_AUTH_COOKIE_SAMESITE=Lax
 
 说明：
 - `CLIGREP_HTTP_ADDR`：HTTP 监听地址。
-- `CLIGREP_DB_HOST` / `CLIGREP_DB_PORT`：MySQL 地址与端口。
-- `CLIGREP_DB_NAME`：应用使用的 MySQL database 名称。
-- `CLIGREP_DB_USER` / `CLIGREP_DB_PASSWORD`：MySQL 登录凭据。
+- `CLIGREP_DB_HOST` / `CLIGREP_DB_PORT`：MySQL 地址与端口，必须显式配置。
+- `CLIGREP_DB_NAME`：应用使用的 MySQL database 名称，必须显式配置。
+- `CLIGREP_DB_USER` / `CLIGREP_DB_PASSWORD`：MySQL 登录凭据，必须显式配置。
 - `CLIGREP_BUSYBOX_IMAGE` / `CLIGREP_PYTHON_IMAGE`：沙箱运行镜像。
 - `CLIGREP_CONTAINER_CPUS` / `CLIGREP_CONTAINER_MEMORY`：沙箱容器资源限制。
 - `CLIGREP_COMMAND_TIMEOUT_MS`：单次命令执行超时。
 - `CLIGREP_CORS_ORIGIN`：允许的跨域来源，支持 `*` 或逗号分隔多个 origin。
 - `CLIGREP_AUTH_GOOGLE_CLIENT_ID` / `CLIGREP_AUTH_GOOGLE_CLIENT_SECRET`：Google OAuth2 Web Application 凭据。
-- `CLIGREP_AUTH_GOOGLE_REDIRECT_URL`：Google OAuth2 回调地址，必须与 Google 控制台登记值完全一致。
-- `CLIGREP_AUTH_GOOGLE_SUCCESS_URL` / `CLIGREP_AUTH_GOOGLE_FAILURE_URL`：Google 登录成功或失败后的前端跳转地址。
+- `CLIGREP_AUTH_GOOGLE_REDIRECT_URL`：Google OAuth2 回调地址，必须与 Google 控制台登记值完全一致；未配置时 Google 登录保持禁用。
+- `CLIGREP_AUTH_GOOGLE_SUCCESS_URL` / `CLIGREP_AUTH_GOOGLE_FAILURE_URL`：Google 登录成功或失败后的前端跳转地址；未配置时 Google 登录保持禁用。
 - `CLIGREP_AUTH_SESSION_TTL_HOURS`：站内 session 过期时间。
 - `CLIGREP_AUTH_COOKIE_NAME` / `CLIGREP_AUTH_COOKIE_SECURE` / `CLIGREP_AUTH_COOKIE_DOMAIN` / `CLIGREP_AUTH_COOKIE_SAMESITE`：站内登录态 Cookie 配置。
 
@@ -106,16 +106,16 @@ cp .env.example .env
 如需手工建库建表，可执行：
 
 ```bash
-mysql -h 13.212.113.109 -P 3306 -u root -p < scripts/mysql/init.sql
+mysql -h <db-host> -P <db-port> -u root -p < scripts/mysql/init.sql
 ```
 
-应用启动时也会自动尝试创建 `cligrep` 数据库并初始化表结构；若当前账号没有建库权限，请先手工执行上面的 SQL。
+执行前请先把 `scripts/mysql/init.sql` 中的占位密码替换为真实强密码。应用启动时也会自动尝试创建 `CLIGREP_DB_NAME` 指定的数据库并初始化表结构；若当前账号没有建库权限，请先手工执行上面的 SQL。
 
 ### 前端联调
 - 前端开发模式默认通过 Vite 代理访问 `http://127.0.0.1:11802`。
 - 前端容器部署模式默认由 Nginx 把 `/api` 与 `/healthz` 转发到宿主机 `:11802`。
 - 如需开放其他前端来源，修改 `.env` 中 `CLIGREP_CORS_ORIGIN` 后重启服务。
-- Google 登录调试时，需在 Google Auth Platform 中登记 `http://127.0.0.1:11802/api/v1/auth/google/callback` 和 `http://localhost:11802/api/v1/auth/google/callback`。
+- Google 登录调试时，需在 Google Auth Platform 中登记与你 `.env` 中 `CLIGREP_AUTH_GOOGLE_REDIRECT_URL` 完全一致的回调地址。
 
 ### Google 登录接口
 - `GET /api/v1/auth/google/start`：发起 Google OAuth2 登录。
@@ -154,6 +154,7 @@ ps -p "$(cat run/cligrep-server.pid)"
 
 ### 常见排查
 - 启动日志出现 `warning: sandbox is not ready`：说明服务已启动，但沙箱依赖仍有缺失，先看 `/healthz` 里的 `sandbox` 与 `issues` 字段。
+- 启动即失败并提示 `validate configuration`：说明数据库必填配置缺失或格式非法，先检查 `.env` 中的 `CLIGREP_DB_*`。
 - 启动失败且日志提示端口冲突：检查 `11802` 是否已被其他进程占用，或修改 `CLIGREP_HTTP_ADDR`。
 - 页面跨域失败：确认 `CLIGREP_CORS_ORIGIN` 包含当前前端访问地址，并重新执行 `./stop.sh && ./start.sh`。
 - 执行命令失败：确认 Docker Engine 正常运行，且 `busybox:1.36.1` 与 `python:3.12-slim` 已预拉取。
@@ -162,8 +163,8 @@ ps -p "$(cat run/cligrep-server.pid)"
 
 推荐排查命令：
 ```bash
-mysql -h 13.212.113.109 -P 3306 -u cligrep -p -e "SHOW DATABASES;"
-mysql -h 13.212.113.109 -P 3306 -u cligrep -p -D cligrep -e "SHOW TABLES;"
+mysql -h <db-host> -P <db-port> -u <db-user> -p -e "SHOW DATABASES;"
+mysql -h <db-host> -P <db-port> -u <db-user> -p -D <db-name> -e "SHOW TABLES;"
 docker info
 docker image inspect busybox:1.36.1
 docker image inspect python:3.12-slim

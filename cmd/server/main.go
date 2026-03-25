@@ -19,6 +19,9 @@ func main() {
 	defer stop()
 
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("validate configuration: %v", err)
+	}
 
 	application, err := app.New(ctx, cfg)
 	if err != nil {
