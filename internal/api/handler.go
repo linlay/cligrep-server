@@ -2,20 +2,35 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/linlay/cligrep-server/internal/config"
 	"github.com/linlay/cligrep-server/internal/models"
 )
 
 type Handler struct {
-	app         application
-	mux         *http.ServeMux
-	corsOrigins []string
+	app            application
+	mux            *http.ServeMux
+	corsOrigins    []string
+	cookieName     string
+	cookieSecure   bool
+	cookieDomain   string
+	cookieSameSite http.SameSite
+	sessionTTL     time.Duration
+	authSuccessURL string
+	authFailureURL string
+	googleRedirect string
 }
 
 type application interface {
@@ -27,17 +42,34 @@ type application interface {
 	ExecuteBuiltin(ctx context.Context, request models.BuiltinExecRequest) (models.BuiltinExecResponse, error)
 	Login(ctx context.Context, request models.LoginRequest) (models.User, error)
 	AnonymousSession(ctx context.Context) (models.User, error)
+	RegisterLocal(ctx context.Context, request models.LocalRegisterRequest, metadata models.SessionMetadata) (models.User, string, error)
+	LoginLocal(ctx context.Context, request models.LocalLoginRequest, metadata models.SessionMetadata) (models.User, string, error)
+	CreateSession(ctx context.Context, userID int64, metadata models.SessionMetadata) (string, error)
+	SessionUser(ctx context.Context, sessionToken string) (models.User, error)
+	DeleteSession(ctx context.Context, sessionToken string) error
+	UpdateProfile(ctx context.Context, userID int64, request models.UpdateProfileRequest) (models.User, error)
+	RecordAuthAttempt(ctx context.Context, entry models.AuthLoginLog) error
+	GoogleAuthURL(state string) (string, error)
+	LoginWithGoogleCode(ctx context.Context, code string, metadata models.SessionMetadata) (models.User, string, error)
 	ListFavorites(ctx context.Context, userID int64) ([]models.CLI, error)
 	SetFavorite(ctx context.Context, request models.FavoriteMutation) error
 	ListComments(ctx context.Context, cliSlug string) ([]models.Comment, error)
 	AddComment(ctx context.Context, request models.CommentMutation) (models.Comment, error)
 }
 
-func NewHandler(application application, corsOrigin string) http.Handler {
+func NewHandler(application application, cfg config.Config) http.Handler {
 	handler := &Handler{
-		app:         application,
-		mux:         http.NewServeMux(),
-		corsOrigins: parseCORSOrigins(corsOrigin),
+		app:            application,
+		mux:            http.NewServeMux(),
+		corsOrigins:    parseCORSOrigins(cfg.CORSOrigin),
+		cookieName:     cfg.AuthCookieName,
+		cookieSecure:   cfg.AuthCookieSecure,
+		cookieDomain:   cfg.AuthCookieDomain,
+		cookieSameSite: cfg.AuthCookieSameSite,
+		sessionTTL:     cfg.SessionTTL,
+		authSuccessURL: cfg.AuthSuccessURL,
+		authFailureURL: cfg.AuthFailureURL,
+		googleRedirect: cfg.GoogleRedirect,
 	}
 	handler.routes()
 	return handler.withMiddleware(handler.mux)
@@ -50,9 +82,15 @@ func (h *Handler) routes() {
 	h.mux.HandleFunc("/api/v1/clis/", h.handleCLIBySlug)
 	h.mux.HandleFunc("/api/v1/exec", h.handleExec)
 	h.mux.HandleFunc("/api/v1/builtin/exec", h.handleBuiltinExec)
+	h.mux.HandleFunc("/api/v1/auth/google/start", h.handleGoogleStart)
+	h.mux.HandleFunc("/api/v1/auth/google/callback", h.handleGoogleCallback)
+	h.mux.HandleFunc("/api/v1/auth/local/register", h.handleLocalRegister)
+	h.mux.HandleFunc("/api/v1/auth/local/login", h.handleLocalLogin)
+	h.mux.HandleFunc("/api/v1/auth/me", h.handleMe)
+	h.mux.HandleFunc("/api/v1/auth/logout", h.handleLogout)
 	h.mux.HandleFunc("/api/v1/auth/mock/anonymous", h.handleAnonymous)
 	h.mux.HandleFunc("/api/v1/auth/mock/login", h.handleLogin)
-	h.mux.HandleFunc("/api/v1/auth/mock/logout", h.handleLogout)
+	h.mux.HandleFunc("/api/v1/auth/mock/logout", h.handleMockLogout)
 	h.mux.HandleFunc("/api/v1/favorites", h.handleFavorites)
 	h.mux.HandleFunc("/api/v1/comments", h.handleComments)
 }
@@ -62,13 +100,18 @@ func (h *Handler) withMiddleware(next http.Handler) http.Handler {
 		if origin := h.allowedOrigin(r.Header.Get("Origin")); origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		}
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
+		}
+
+		if user, err := h.lookupSessionUser(r); err == nil {
+			r = r.WithContext(withCurrentUser(r.Context(), user))
 		}
 
 		next.ServeHTTP(w, r)
@@ -97,11 +140,11 @@ func parseCORSOrigins(value string) []string {
 
 func (h *Handler) allowedOrigin(requestOrigin string) string {
 	if len(h.corsOrigins) == 0 {
-		return "*"
+		return requestOrigin
 	}
 	for _, allowed := range h.corsOrigins {
 		if allowed == "*" {
-			return "*"
+			return requestOrigin
 		}
 		if requestOrigin != "" && requestOrigin == allowed {
 			return allowed
@@ -184,6 +227,9 @@ func (h *Handler) handleExec(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
+	if user, ok := currentUserFromContext(r.Context()); ok {
+		request.UserID = &user.ID
+	}
 
 	result, err := h.app.ExecuteCLI(r.Context(), request)
 	if err != nil {
@@ -203,6 +249,9 @@ func (h *Handler) handleBuiltinExec(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
+	}
+	if user, ok := currentUserFromContext(r.Context()); ok {
+		request.UserID = &user.ID
 	}
 
 	response, err := h.app.ExecuteBuiltin(r.Context(), request)
@@ -230,6 +279,22 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	sessionToken, err := h.app.CreateSession(r.Context(), user.ID, requestMetadata(r))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	h.setSessionCookie(w, sessionToken)
+	_ = h.app.RecordAuthAttempt(r.Context(), models.AuthLoginLog{
+		UserID:      &user.ID,
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
+		AuthMethod:  models.AuthMethodMock,
+		LoginResult: models.AuthResultSuccess,
+		IP:          requestIP(r),
+		UserAgent:   strings.TrimSpace(r.UserAgent()),
+		LoginAt:     time.Now().UTC(),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
 }
 
@@ -244,7 +309,205 @@ func (h *Handler) handleAnonymous(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.deleteCurrentSession(r)
+	h.clearSessionCookie(w)
 	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
+func (h *Handler) handleMockLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	h.deleteCurrentSession(r)
+	h.clearSessionCookie(w)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+func (h *Handler) handleGoogleStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	state, err := generateNonce()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to initialize auth state")
+		return
+	}
+
+	authURL, err := h.app.GoogleAuthURL(state)
+	if err != nil {
+		h.redirectFailure(w, r, "google_auth_not_configured")
+		return
+	}
+
+	http.SetCookie(w, h.newCookie(h.oauthStateCookieName(), state, 10*time.Minute))
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+func (h *Handler) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	stateCookie, err := r.Cookie(h.oauthStateCookieName())
+	if err != nil || stateCookie.Value == "" {
+		_ = h.app.RecordAuthAttempt(r.Context(), models.AuthLoginLog{
+			AuthMethod:    models.AuthMethodGoogle,
+			LoginResult:   models.AuthResultFailure,
+			FailureReason: "missing_state",
+			IP:            requestIP(r),
+			UserAgent:     strings.TrimSpace(r.UserAgent()),
+			LoginAt:       time.Now().UTC(),
+		})
+		h.redirectFailure(w, r, "missing_state")
+		return
+	}
+	if stateCookie.Value != r.URL.Query().Get("state") {
+		h.clearOAuthStateCookie(w)
+		_ = h.app.RecordAuthAttempt(r.Context(), models.AuthLoginLog{
+			AuthMethod:    models.AuthMethodGoogle,
+			LoginResult:   models.AuthResultFailure,
+			FailureReason: "invalid_state",
+			IP:            requestIP(r),
+			UserAgent:     strings.TrimSpace(r.UserAgent()),
+			LoginAt:       time.Now().UTC(),
+		})
+		h.redirectFailure(w, r, "invalid_state")
+		return
+	}
+
+	code := strings.TrimSpace(r.URL.Query().Get("code"))
+	if code == "" {
+		h.clearOAuthStateCookie(w)
+		_ = h.app.RecordAuthAttempt(r.Context(), models.AuthLoginLog{
+			AuthMethod:    models.AuthMethodGoogle,
+			LoginResult:   models.AuthResultFailure,
+			FailureReason: "missing_code",
+			IP:            requestIP(r),
+			UserAgent:     strings.TrimSpace(r.UserAgent()),
+			LoginAt:       time.Now().UTC(),
+		})
+		h.redirectFailure(w, r, "missing_code")
+		return
+	}
+
+	user, sessionToken, err := h.app.LoginWithGoogleCode(r.Context(), code, requestMetadata(r))
+	if err != nil {
+		h.clearOAuthStateCookie(w)
+		authReason := string(models.AuthFailureReasonFromError(err))
+		log.Printf(
+			"google callback failed: reason=%s err=%v redirect_uri=%s host=%s path=%s has_code=%t state_valid=%t",
+			authReason,
+			err,
+			h.googleRedirect,
+			r.Host,
+			r.URL.Path,
+			code != "",
+			true,
+		)
+		h.redirectFailure(w, r, "google_callback_failed", authReason)
+		return
+	}
+
+	h.setSessionCookie(w, sessionToken)
+	h.clearOAuthStateCookie(w)
+	http.Redirect(w, r, h.authSuccessURLForUser(user), http.StatusFound)
+}
+
+func (h *Handler) handleLocalRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var request models.LocalRegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+
+	user, sessionToken, err := h.app.RegisterLocal(r.Context(), request, requestMetadata(r))
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, models.ErrUsernameTaken):
+			status = http.StatusConflict
+		case errors.Is(err, models.ErrInvalidUsername), errors.Is(err, models.ErrWeakPassword), errors.Is(err, models.ErrInvalidDisplayName):
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+
+	h.setSessionCookie(w, sessionToken)
+	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
+func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var request models.LocalLoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+
+	user, sessionToken, err := h.app.LoginLocal(r.Context(), request, requestMetadata(r))
+	if err != nil {
+		status := http.StatusInternalServerError
+		switch {
+		case errors.Is(err, models.ErrInvalidCredentials):
+			status = http.StatusUnauthorized
+		case errors.Is(err, models.ErrInvalidUsername), errors.Is(err, models.ErrWeakPassword), errors.Is(err, models.ErrInvalidDisplayName):
+			status = http.StatusBadRequest
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+
+	h.setSessionCookie(w, sessionToken)
+	writeJSON(w, http.StatusOK, map[string]any{"user": user})
+}
+
+func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		user, ok := currentUserFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, models.ErrUnauthorized.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"user": user})
+	case http.MethodPatch:
+		user, ok := currentUserFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, models.ErrUnauthorized.Error())
+			return
+		}
+		var request models.UpdateProfileRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json body")
+			return
+		}
+		updated, err := h.app.UpdateProfile(r.Context(), user.ID, request)
+		if err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, sql.ErrNoRows) {
+				status = http.StatusNotFound
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"user": updated})
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -252,13 +515,16 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+
+	h.deleteCurrentSession(r)
+	h.clearSessionCookie(w)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 func (h *Handler) handleFavorites(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		userID, err := parseUserID(r.URL.Query().Get("userId"))
+		userID, err := userIDFromRequest(r, r.URL.Query().Get("userId"))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -274,6 +540,9 @@ func (h *Handler) handleFavorites(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid json body")
 			return
+		}
+		if user, ok := currentUserFromContext(r.Context()); ok {
+			request.UserID = user.ID
 		}
 		if err := h.app.SetFavorite(r.Context(), request); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -305,6 +574,9 @@ func (h *Handler) handleComments(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid json body")
 			return
 		}
+		if user, ok := currentUserFromContext(r.Context()); ok {
+			request.UserID = user.ID
+		}
 		comment, err := h.app.AddComment(r.Context(), request)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -314,6 +586,145 @@ func (h *Handler) handleComments(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+type contextKey string
+
+const currentUserKey contextKey = "current-user"
+
+func withCurrentUser(ctx context.Context, user models.User) context.Context {
+	return context.WithValue(ctx, currentUserKey, user)
+}
+
+func currentUserFromContext(ctx context.Context) (models.User, bool) {
+	user, ok := ctx.Value(currentUserKey).(models.User)
+	return user, ok
+}
+
+func userIDFromRequest(r *http.Request, raw string) (int64, error) {
+	if user, ok := currentUserFromContext(r.Context()); ok {
+		return user.ID, nil
+	}
+	return parseUserID(raw)
+}
+
+func requestMetadata(r *http.Request) models.SessionMetadata {
+	return models.SessionMetadata{
+		IP:        requestIP(r),
+		UserAgent: strings.TrimSpace(r.UserAgent()),
+	}
+}
+
+func requestIP(r *http.Request) string {
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+		if len(parts) > 0 {
+			return strings.TrimSpace(parts[0])
+		}
+	}
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+		return realIP
+	}
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil && host != "" {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
+}
+
+func (h *Handler) lookupSessionUser(r *http.Request) (models.User, error) {
+	cookie, err := r.Cookie(h.cookieName)
+	if err != nil {
+		return models.User{}, err
+	}
+	return h.app.SessionUser(r.Context(), cookie.Value)
+}
+
+func (h *Handler) newCookie(name, value string, maxAge time.Duration) *http.Cookie {
+	cookie := &http.Cookie{
+		Name:     name,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   h.cookieSecure,
+		SameSite: h.cookieSameSite,
+	}
+	if h.cookieDomain != "" {
+		cookie.Domain = h.cookieDomain
+	}
+	if maxAge > 0 {
+		cookie.Expires = time.Now().Add(maxAge)
+		cookie.MaxAge = int(maxAge.Seconds())
+	}
+	return cookie
+}
+
+func (h *Handler) setSessionCookie(w http.ResponseWriter, token string) {
+	http.SetCookie(w, h.newCookie(h.cookieName, token, h.sessionTTL))
+}
+
+func (h *Handler) clearSessionCookie(w http.ResponseWriter) {
+	cookie := h.newCookie(h.cookieName, "", -time.Hour)
+	cookie.MaxAge = -1
+	http.SetCookie(w, cookie)
+}
+
+func (h *Handler) clearOAuthStateCookie(w http.ResponseWriter) {
+	cookie := h.newCookie(h.oauthStateCookieName(), "", -time.Hour)
+	cookie.MaxAge = -1
+	http.SetCookie(w, cookie)
+}
+
+func (h *Handler) oauthStateCookieName() string {
+	return h.cookieName + "_oauth_state"
+}
+
+func generateNonce() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func (h *Handler) deleteCurrentSession(r *http.Request) {
+	cookie, err := r.Cookie(h.cookieName)
+	if err != nil || cookie.Value == "" {
+		return
+	}
+	_ = h.app.DeleteSession(r.Context(), cookie.Value)
+}
+
+func (h *Handler) redirectFailure(w http.ResponseWriter, r *http.Request, reason string, authReason ...string) {
+	h.clearSessionCookie(w)
+	sanitizedAuthReason := ""
+	if len(authReason) > 0 {
+		sanitizedAuthReason = strings.TrimSpace(authReason[0])
+	}
+	http.Redirect(w, r, appendAuthFailure(h.authFailureURL, reason, sanitizedAuthReason), http.StatusFound)
+}
+
+func (h *Handler) authSuccessURLForUser(user models.User) string {
+	return h.authSuccessURL
+}
+
+func appendAuthFailure(rawURL, reason, authReason string) string {
+	if strings.TrimSpace(rawURL) == "" {
+		return "/"
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	query := parsed.Query()
+	if strings.TrimSpace(reason) != "" {
+		query.Set("authError", reason)
+	}
+	if strings.TrimSpace(authReason) != "" {
+		query.Set("authReason", authReason)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func parseUserID(raw string) (int64, error) {

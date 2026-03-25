@@ -21,6 +21,7 @@ type App struct {
 	store    *data.Store
 	runner   *sandbox.Runner
 	builtins *builtin.Service
+	google   googleOAuthProvider
 }
 
 func New(ctx context.Context, cfg config.Config) (*App, error) {
@@ -57,6 +58,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		store:    store,
 		runner:   runner,
 		builtins: builtin.NewService(store, runner),
+		google:   newGoogleOAuthProvider(cfg),
 	}, nil
 }
 
@@ -85,6 +87,15 @@ func (a *App) Health(ctx context.Context) map[string]any {
 		"homepageSortModes": []string{"favorites", "newest", "runs"},
 		"sandboxReady":      sandboxStatus.Ready,
 		"sandbox":           sandboxStatus,
+		"auth": map[string]any{
+			"google": map[string]any{
+				"configured":         a.google.Configured(),
+				"clientIdConfigured": strings.TrimSpace(a.cfg.GoogleClientID) != "",
+				"redirectUrl":        a.cfg.GoogleRedirect,
+				"successUrl":         a.cfg.AuthSuccessURL,
+				"failureUrl":         a.cfg.AuthFailureURL,
+			},
+		},
 	}
 }
 
@@ -197,6 +208,112 @@ func (a *App) Login(ctx context.Context, request models.LoginRequest) (models.Us
 
 func (a *App) AnonymousSession(ctx context.Context) (models.User, error) {
 	return a.store.LoginMock(ctx, "anonymous")
+}
+
+func (a *App) RegisterLocal(ctx context.Context, request models.LocalRegisterRequest, metadata models.SessionMetadata) (models.User, string, error) {
+	return a.store.RegisterLocal(ctx, request, metadata, a.cfg.SessionTTL)
+}
+
+func (a *App) LoginLocal(ctx context.Context, request models.LocalLoginRequest, metadata models.SessionMetadata) (models.User, string, error) {
+	return a.store.LoginLocal(ctx, request, metadata, a.cfg.SessionTTL)
+}
+
+func (a *App) CreateSession(ctx context.Context, userID int64, metadata models.SessionMetadata) (string, error) {
+	return a.store.CreateSession(ctx, userID, metadata, a.cfg.SessionTTL)
+}
+
+func (a *App) SessionUser(ctx context.Context, sessionToken string) (models.User, error) {
+	return a.store.GetUserBySessionToken(ctx, sessionToken)
+}
+
+func (a *App) DeleteSession(ctx context.Context, sessionToken string) error {
+	return a.store.DeleteSession(ctx, sessionToken)
+}
+
+func (a *App) UpdateProfile(ctx context.Context, userID int64, request models.UpdateProfileRequest) (models.User, error) {
+	return a.store.UpdateUserDisplayName(ctx, userID, request.DisplayName)
+}
+
+func (a *App) RecordAuthAttempt(ctx context.Context, entry models.AuthLoginLog) error {
+	return a.store.RecordAuthAttempt(ctx, entry)
+}
+
+func (a *App) GoogleAuthURL(state string) (string, error) {
+	if !a.google.Configured() {
+		return "", models.ErrAuthNotConfigured
+	}
+	return a.google.AuthCodeURL(state), nil
+}
+
+func (a *App) LoginWithGoogleCode(ctx context.Context, code string, metadata models.SessionMetadata) (models.User, string, error) {
+	identity, err := a.google.ExchangeCode(ctx, code)
+	if err != nil {
+		_ = a.store.RecordAuthAttempt(ctx, models.AuthLoginLog{
+			AuthMethod:    models.AuthMethodGoogle,
+			LoginResult:   models.AuthResultFailure,
+			FailureReason: string(models.AuthFailureReasonFromError(err)),
+			IP:            metadata.IP,
+			UserAgent:     metadata.UserAgent,
+			LoginAt:       time.Now().UTC(),
+		})
+		return models.User{}, "", err
+	}
+
+	user, err := a.store.UpsertGoogleUser(ctx, identity.Subject, identity.Email, identity.Name, identity.Picture, metadata.IP)
+	if err != nil {
+		wrapped := models.NewAuthFailureError(
+			models.AuthFailureReasonGoogleUserUpsertFailed,
+			fmt.Errorf("upsert google user: %w", err),
+		)
+		displayName := strings.TrimSpace(identity.Name)
+		if displayName == "" {
+			displayName = strings.TrimSpace(identity.Email)
+		}
+		_ = a.store.RecordAuthAttempt(ctx, models.AuthLoginLog{
+			Username:      "google:" + identity.Subject,
+			DisplayName:   displayName,
+			AuthMethod:    models.AuthMethodGoogle,
+			LoginResult:   models.AuthResultFailure,
+			FailureReason: string(models.AuthFailureReasonFromError(wrapped)),
+			IP:            metadata.IP,
+			UserAgent:     metadata.UserAgent,
+			LoginAt:       time.Now().UTC(),
+		})
+		return models.User{}, "", wrapped
+	}
+
+	sessionToken, err := a.store.CreateSession(ctx, user.ID, metadata, a.cfg.SessionTTL)
+	if err != nil {
+		wrapped := models.NewAuthFailureError(
+			models.AuthFailureReasonGoogleSessionCreateFailed,
+			fmt.Errorf("create google session: %w", err),
+		)
+		_ = a.store.RecordAuthAttempt(ctx, models.AuthLoginLog{
+			UserID:        &user.ID,
+			Username:      user.Username,
+			DisplayName:   user.DisplayName,
+			AuthMethod:    models.AuthMethodGoogle,
+			LoginResult:   models.AuthResultFailure,
+			FailureReason: string(models.AuthFailureReasonFromError(wrapped)),
+			IP:            metadata.IP,
+			UserAgent:     metadata.UserAgent,
+			LoginAt:       time.Now().UTC(),
+		})
+		return models.User{}, "", wrapped
+	}
+
+	_ = a.store.RecordAuthAttempt(ctx, models.AuthLoginLog{
+		UserID:      &user.ID,
+		Username:    user.Username,
+		DisplayName: user.DisplayName,
+		AuthMethod:  models.AuthMethodGoogle,
+		LoginResult: models.AuthResultSuccess,
+		IP:          metadata.IP,
+		UserAgent:   metadata.UserAgent,
+		LoginAt:     time.Now().UTC(),
+	})
+
+	return user, sessionToken, nil
 }
 
 func (a *App) ListFavorites(ctx context.Context, userID int64) ([]models.CLI, error) {

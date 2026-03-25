@@ -55,6 +55,16 @@ CLIGREP_CONTAINER_CPUS=0.50
 CLIGREP_CONTAINER_MEMORY=128m
 CLIGREP_COMMAND_TIMEOUT_MS=4000
 CLIGREP_CORS_ORIGIN=http://127.0.0.1:11801,http://localhost:11801,http://127.0.0.1:5173,http://localhost:5173
+CLIGREP_AUTH_GOOGLE_CLIENT_ID=
+CLIGREP_AUTH_GOOGLE_CLIENT_SECRET=
+CLIGREP_AUTH_GOOGLE_REDIRECT_URL=http://127.0.0.1:11802/api/v1/auth/google/callback
+CLIGREP_AUTH_GOOGLE_SUCCESS_URL=http://127.0.0.1:11801/
+CLIGREP_AUTH_GOOGLE_FAILURE_URL=http://127.0.0.1:11801/login?error=google_oauth
+CLIGREP_AUTH_SESSION_TTL_HOURS=168
+CLIGREP_AUTH_COOKIE_NAME=cligrep_session
+CLIGREP_AUTH_COOKIE_SECURE=false
+CLIGREP_AUTH_COOKIE_DOMAIN=
+CLIGREP_AUTH_COOKIE_SAMESITE=Lax
 ```
 
 说明：
@@ -66,6 +76,11 @@ CLIGREP_CORS_ORIGIN=http://127.0.0.1:11801,http://localhost:11801,http://127.0.0
 - `CLIGREP_CONTAINER_CPUS` / `CLIGREP_CONTAINER_MEMORY`：沙箱容器资源限制。
 - `CLIGREP_COMMAND_TIMEOUT_MS`：单次命令执行超时。
 - `CLIGREP_CORS_ORIGIN`：允许的跨域来源，支持 `*` 或逗号分隔多个 origin。
+- `CLIGREP_AUTH_GOOGLE_CLIENT_ID` / `CLIGREP_AUTH_GOOGLE_CLIENT_SECRET`：Google OAuth2 Web Application 凭据。
+- `CLIGREP_AUTH_GOOGLE_REDIRECT_URL`：Google OAuth2 回调地址，必须与 Google 控制台登记值完全一致。
+- `CLIGREP_AUTH_GOOGLE_SUCCESS_URL` / `CLIGREP_AUTH_GOOGLE_FAILURE_URL`：Google 登录成功或失败后的前端跳转地址。
+- `CLIGREP_AUTH_SESSION_TTL_HOURS`：站内 session 过期时间。
+- `CLIGREP_AUTH_COOKIE_NAME` / `CLIGREP_AUTH_COOKIE_SECURE` / `CLIGREP_AUTH_COOKIE_DOMAIN` / `CLIGREP_AUTH_COOKIE_SAMESITE`：站内登录态 Cookie 配置。
 
 ## 4. 部署
 ### 仓库内运行布局
@@ -100,6 +115,14 @@ mysql -h 13.212.113.109 -P 3306 -u root -p < scripts/mysql/init.sql
 - 前端开发模式默认通过 Vite 代理访问 `http://127.0.0.1:11802`。
 - 前端容器部署模式默认由 Nginx 把 `/api` 与 `/healthz` 转发到宿主机 `:11802`。
 - 如需开放其他前端来源，修改 `.env` 中 `CLIGREP_CORS_ORIGIN` 后重启服务。
+- Google 登录调试时，需在 Google Auth Platform 中登记 `http://127.0.0.1:11802/api/v1/auth/google/callback` 和 `http://localhost:11802/api/v1/auth/google/callback`。
+
+### Google 登录接口
+- `GET /api/v1/auth/google/start`：发起 Google OAuth2 登录。
+- `GET /api/v1/auth/google/callback`：Google OAuth2 回调入口。
+- `GET /api/v1/auth/me`：读取当前 HttpOnly session 对应用户。
+- `POST /api/v1/auth/logout`：删除当前 session。
+- `POST /api/v1/auth/mock/login`：保留 mock 登录，同时会写入站内 session。
 
 ### 可选 systemd 部署
 需要系统托管时，可把 `ExecStart` 指向编译后的二进制，并通过 `EnvironmentFile` 复用同一份 `.env` 内容。此方式是可选增强，不是本仓库默认运行路径。

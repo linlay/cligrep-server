@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"errors"
+	"fmt"
+	"time"
+)
 
 type CLIType string
 
@@ -47,10 +51,14 @@ type CLI struct {
 }
 
 type User struct {
-	ID        int64     `json:"id"`
-	Username  string    `json:"username"`
-	IP        string    `json:"ip"`
-	CreatedAt time.Time `json:"createdAt"`
+	ID           int64     `json:"id"`
+	Username     string    `json:"username"`
+	DisplayName  string    `json:"displayName"`
+	Email        string    `json:"email,omitempty"`
+	AvatarURL    string    `json:"avatarUrl,omitempty"`
+	AuthProvider string    `json:"authProvider"`
+	IP           string    `json:"ip"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
 
 type Comment struct {
@@ -110,6 +118,26 @@ type LoginRequest struct {
 	Username string `json:"username"`
 }
 
+type LocalRegisterRequest struct {
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	DisplayName string `json:"displayName"`
+}
+
+type LocalLoginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type UpdateProfileRequest struct {
+	DisplayName string `json:"displayName"`
+}
+
+type SessionMetadata struct {
+	IP        string
+	UserAgent string
+}
+
 type FavoriteMutation struct {
 	UserID  int64  `json:"userId"`
 	CLISlug string `json:"cliSlug"`
@@ -120,4 +148,90 @@ type CommentMutation struct {
 	UserID  int64  `json:"userId"`
 	CLISlug string `json:"cliSlug"`
 	Body    string `json:"body"`
+}
+
+type AuthMethod string
+
+const (
+	AuthMethodGoogle        AuthMethod = "google"
+	AuthMethodLocalPassword AuthMethod = "local_password"
+	AuthMethodMock          AuthMethod = "mock"
+)
+
+type AuthResult string
+
+const (
+	AuthResultSuccess AuthResult = "success"
+	AuthResultFailure AuthResult = "failure"
+)
+
+type AuthLoginLog struct {
+	UserID         *int64
+	Username       string
+	DisplayName    string
+	AuthMethod     AuthMethod
+	LoginResult    AuthResult
+	FailureReason  string
+	IP             string
+	UserAgent      string
+	LoginAt        time.Time
+}
+
+var (
+	ErrUnauthorized      = errors.New("unauthorized")
+	ErrAuthNotConfigured = errors.New("auth is not configured")
+	ErrInvalidCredentials = errors.New("invalid username or password")
+	ErrUsernameTaken      = errors.New("username is already taken")
+	ErrInvalidUsername    = errors.New("username must match [a-zA-Z0-9_.-]{3,32}")
+	ErrWeakPassword       = errors.New("password must be at least 8 characters")
+	ErrInvalidDisplayName = errors.New("display name cannot be empty")
+)
+
+type AuthFailureReason string
+
+const (
+	AuthFailureReasonGoogleTokenExchangeFailed AuthFailureReason = "google_token_exchange_failed"
+	AuthFailureReasonGoogleIDTokenMissing      AuthFailureReason = "google_id_token_missing"
+	AuthFailureReasonGoogleIDTokenInvalid      AuthFailureReason = "google_id_token_invalid"
+	AuthFailureReasonGoogleJWKSFetchFailed     AuthFailureReason = "google_jwks_fetch_failed"
+	AuthFailureReasonGoogleUserUpsertFailed    AuthFailureReason = "google_user_upsert_failed"
+	AuthFailureReasonGoogleSessionCreateFailed AuthFailureReason = "google_session_create_failed"
+	AuthFailureReasonGoogleCallbackFailed      AuthFailureReason = "google_callback_failed"
+)
+
+type AuthFailureError struct {
+	Reason AuthFailureReason
+	Err    error
+}
+
+func (e *AuthFailureError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.Err == nil {
+		return string(e.Reason)
+	}
+	return fmt.Sprintf("%s: %v", e.Reason, e.Err)
+}
+
+func (e *AuthFailureError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func NewAuthFailureError(reason AuthFailureReason, err error) error {
+	return &AuthFailureError{
+		Reason: reason,
+		Err:    err,
+	}
+}
+
+func AuthFailureReasonFromError(err error) AuthFailureReason {
+	var authErr *AuthFailureError
+	if errors.As(err, &authErr) && authErr != nil && authErr.Reason != "" {
+		return authErr.Reason
+	}
+	return AuthFailureReasonGoogleCallbackFailed
 }

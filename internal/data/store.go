@@ -70,6 +70,9 @@ func (s *Store) init(ctx context.Context) error {
 			return fmt.Errorf("initialize mysql schema: %w", err)
 		}
 	}
+	if err := s.upgradeAuthSchema(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -210,31 +213,6 @@ func (s *Store) GetCLI(ctx context.Context, slug string) (models.CLI, error) {
 		FROM cli_registry c
 		WHERE c.SLUG_ = ? AND c.ENABLED_ = 1`, cliSelectList), slug)
 	return scanCLI(row)
-}
-
-func (s *Store) LoginMock(ctx context.Context, username string) (models.User, error) {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		username = "operator"
-	}
-
-	ip := generateMockIP(username)
-	now := time.Now().UTC()
-
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO auth_user (USERNAME_, IP_, CREATED_AT_)
-		VALUES (?, ?, ?)
-		ON DUPLICATE KEY UPDATE IP_ = VALUES(IP_)`, username, ip, now); err != nil {
-		return models.User{}, fmt.Errorf("upsert mock user: %w", err)
-	}
-
-	row := s.db.QueryRowContext(ctx, `SELECT ID_, USERNAME_, IP_, CREATED_AT_ FROM auth_user WHERE USERNAME_ = ?`, username)
-	return scanUser(row)
-}
-
-func (s *Store) GetUser(ctx context.Context, userID int64) (models.User, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT ID_, USERNAME_, IP_, CREATED_AT_ FROM auth_user WHERE ID_ = ?`, userID)
-	return scanUser(row)
 }
 
 func (s *Store) SeedMockUsers(ctx context.Context, usernames []string) error {
@@ -471,7 +449,16 @@ func scanUser(row scanner) (models.User, error) {
 		user      models.User
 		createdAt time.Time
 	)
-	if err := row.Scan(&user.ID, &user.Username, &user.IP, &createdAt); err != nil {
+	if err := row.Scan(
+		&user.ID,
+		&user.Username,
+		&user.DisplayName,
+		&user.Email,
+		&user.AvatarURL,
+		&user.AuthProvider,
+		&user.IP,
+		&createdAt,
+	); err != nil {
 		return models.User{}, err
 	}
 	user.CreatedAt = createdAt.UTC()
@@ -568,10 +555,56 @@ func mysqlSchemaStatements() []string {
 		`CREATE TABLE IF NOT EXISTS auth_user (
 			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 			USERNAME_ VARCHAR(128) NOT NULL,
+			DISPLAY_NAME_ VARCHAR(255) NOT NULL DEFAULT '',
+			EMAIL_ VARCHAR(255) NOT NULL DEFAULT '',
+			AVATAR_URL_ VARCHAR(1024) NOT NULL DEFAULT '',
+			AUTH_PROVIDER_ VARCHAR(32) NOT NULL DEFAULT 'mock',
+			AUTH_SUB_ VARCHAR(255) NULL,
 			IP_ VARCHAR(64) NOT NULL,
 			CREATED_AT_ DATETIME(3) NOT NULL,
+			UPDATED_AT_ DATETIME(3) NOT NULL,
+			LAST_LOGIN_AT_ DATETIME(3) NULL,
 			PRIMARY KEY (ID_),
-			UNIQUE KEY UK_AUTH_USER_USERNAME (USERNAME_)
+			UNIQUE KEY UK_AUTH_USER_USERNAME (USERNAME_),
+			UNIQUE KEY UK_AUTH_USER_PROVIDER_SUB (AUTH_PROVIDER_, AUTH_SUB_)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS auth_local_credential (
+			USER_ID_ BIGINT UNSIGNED NOT NULL,
+			PASSWORD_HASH_ VARCHAR(255) NOT NULL,
+			PASSWORD_UPDATED_AT_ DATETIME(3) NOT NULL,
+			CREATED_AT_ DATETIME(3) NOT NULL,
+			PRIMARY KEY (USER_ID_),
+			CONSTRAINT FK_AUTH_LOCAL_CREDENTIAL_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS auth_session (
+			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			USER_ID_ BIGINT UNSIGNED NOT NULL,
+			TOKEN_HASH_ CHAR(64) NOT NULL,
+			EXPIRES_AT_ DATETIME(3) NOT NULL,
+			CREATED_AT_ DATETIME(3) NOT NULL,
+			LAST_SEEN_AT_ DATETIME(3) NOT NULL,
+			USER_AGENT_ VARCHAR(512) NOT NULL DEFAULT '',
+			IP_ VARCHAR(64) NOT NULL DEFAULT '',
+			PRIMARY KEY (ID_),
+			UNIQUE KEY UK_AUTH_SESSION_TOKEN_HASH (TOKEN_HASH_),
+			KEY IDX_AUTH_SESSION_USER_EXPIRES (USER_ID_, EXPIRES_AT_),
+			CONSTRAINT FK_AUTH_SESSION_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS auth_login_log (
+			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			USER_ID_ BIGINT UNSIGNED NULL,
+			USERNAME_ VARCHAR(128) NOT NULL DEFAULT '',
+			DISPLAY_NAME_ VARCHAR(255) NOT NULL DEFAULT '',
+			AUTH_METHOD_ VARCHAR(32) NOT NULL,
+			LOGIN_RESULT_ VARCHAR(16) NOT NULL,
+			FAILURE_REASON_ VARCHAR(128) NOT NULL DEFAULT '',
+			IP_ VARCHAR(64) NOT NULL DEFAULT '',
+			USER_AGENT_ VARCHAR(512) NOT NULL DEFAULT '',
+			LOGIN_AT_ DATETIME(3) NOT NULL,
+			PRIMARY KEY (ID_),
+			KEY IDX_AUTH_LOGIN_LOG_USER_AT (USER_ID_, LOGIN_AT_),
+			KEY IDX_AUTH_LOGIN_LOG_METHOD_AT (AUTH_METHOD_, LOGIN_AT_),
+			CONSTRAINT FK_AUTH_LOGIN_LOG_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE SET NULL
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 		`CREATE TABLE IF NOT EXISTS user_favorite (
 			USER_ID_ BIGINT UNSIGNED NOT NULL,
