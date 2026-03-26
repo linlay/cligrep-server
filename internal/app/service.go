@@ -124,14 +124,32 @@ func (a *App) GetCLI(ctx context.Context, slug string) (map[string]any, error) {
 		return nil, err
 	}
 
+	releases, err := a.store.GetCLIReleases(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+
 	comments, err := a.store.ListComments(ctx, slug)
 	if err != nil {
 		return nil, err
 	}
 
+	var latestRelease *models.CLIRelease
+	for i := range releases {
+		if releases[i].IsCurrent {
+			latestRelease = &releases[i]
+			break
+		}
+	}
+	if latestRelease == nil && len(releases) > 0 {
+		latestRelease = &releases[0]
+	}
+
 	return map[string]any{
-		"cli":      cli,
-		"comments": comments,
+		"cli":           cli,
+		"comments":      comments,
+		"releases":      releases,
+		"latestRelease": latestRelease,
 		"examples": uniqueStrings([]string{
 			exampleTail(cli.ExampleLine, cli.Slug),
 			"--help",

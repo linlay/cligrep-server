@@ -50,6 +50,28 @@ type CLI struct {
 	Executable      bool            `json:"executable"`
 }
 
+type CLIRelease struct {
+	ID          int64             `json:"-"`
+	Version     string            `json:"version"`
+	PublishedAt time.Time         `json:"publishedAt"`
+	IsCurrent   bool              `json:"isCurrent"`
+	SourceKind  string            `json:"sourceKind"`
+	SourceURL   string            `json:"sourceUrl"`
+	Assets      []CLIReleaseAsset `json:"assets"`
+}
+
+type CLIReleaseAsset struct {
+	ID          int64  `json:"-"`
+	ReleaseID   int64  `json:"-"`
+	FileName    string `json:"fileName"`
+	DownloadURL string `json:"downloadUrl"`
+	OS          string `json:"os"`
+	Arch        string `json:"arch"`
+	PackageKind string `json:"packageKind"`
+	ChecksumURL string `json:"checksumUrl"`
+	SizeBytes   int64  `json:"sizeBytes"`
+}
+
 type User struct {
 	ID           int64     `json:"id"`
 	Username     string    `json:"username"`

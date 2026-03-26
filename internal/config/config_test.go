@@ -19,6 +19,8 @@ func TestLoadAuthDefaultsAndOverrides(t *testing.T) {
 	t.Setenv("CLIGREP_AUTH_COOKIE_SECURE", "true")
 	t.Setenv("CLIGREP_AUTH_COOKIE_DOMAIN", ".example.com")
 	t.Setenv("CLIGREP_AUTH_COOKIE_SAMESITE", "Strict")
+	t.Setenv("CLIGREP_RELEASES_ROOT", "/srv/releases")
+	t.Setenv("CLIGREP_RELEASES_BASE_URL", "https://downloads.example.com/cli-releases")
 
 	cfg := Load()
 
@@ -52,6 +54,12 @@ func TestLoadAuthDefaultsAndOverrides(t *testing.T) {
 	if cfg.AuthCookieSameSite != http.SameSiteStrictMode {
 		t.Fatalf("unexpected same site %v", cfg.AuthCookieSameSite)
 	}
+	if cfg.ReleasesRoot != "/srv/releases" {
+		t.Fatalf("unexpected releases root %q", cfg.ReleasesRoot)
+	}
+	if cfg.ReleasesBaseURL != "https://downloads.example.com/cli-releases" {
+		t.Fatalf("unexpected releases base url %q", cfg.ReleasesBaseURL)
+	}
 }
 
 func TestLoadAuthDefaults(t *testing.T) {
@@ -71,6 +79,8 @@ func TestLoadAuthDefaults(t *testing.T) {
 		"CLIGREP_AUTH_COOKIE_SECURE",
 		"CLIGREP_AUTH_COOKIE_DOMAIN",
 		"CLIGREP_AUTH_COOKIE_SAMESITE",
+		"CLIGREP_RELEASES_ROOT",
+		"CLIGREP_RELEASES_BASE_URL",
 	} {
 		if err := os.Unsetenv(key); err != nil {
 			t.Fatalf("unset %s: %v", key, err)
@@ -102,6 +112,12 @@ func TestLoadAuthDefaults(t *testing.T) {
 	}
 	if cfg.AuthCookieSameSite != http.SameSiteLaxMode {
 		t.Fatalf("unexpected default same site %v", cfg.AuthCookieSameSite)
+	}
+	if cfg.ReleasesRoot != "/docker/cli-releases" {
+		t.Fatalf("unexpected default releases root %q", cfg.ReleasesRoot)
+	}
+	if cfg.ReleasesBaseURL != "https://cligrep.com/cli-releases" {
+		t.Fatalf("unexpected default releases base url %q", cfg.ReleasesBaseURL)
 	}
 }
 

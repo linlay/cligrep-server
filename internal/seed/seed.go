@@ -134,6 +134,24 @@ func textSeeds() []CommandSeed {
 			SourceType: "python_script", Author: "CLI Grep Labs", License: "MIT",
 			CreatedAt: time.Date(2026, 3, 6, 10, 0, 0, 0, time.UTC), OriginalCommand: "python yt_skim.py", Executable: false, RuntimeImage: "text-only",
 		},
+		{
+			Slug: "dbx", DisplayName: "dbx", Summary: "A database CLI for humans and agents with explicit query, update, schema, and export workflows.", Tags: []string{"database", "go", "release-indexed"},
+			Popularity: 90, ExampleLine: "dbx version", Type: models.CLITypeNative, EnvironmentKind: models.EnvironmentKindText,
+			SourceType: "native_go", Author: "linlay", GitHubURL: "https://github.com/linlay/cli-dbx", License: "MIT",
+			CreatedAt: time.Date(2026, 3, 25, 10, 0, 0, 0, time.UTC), OriginalCommand: "dbx", Executable: false, RuntimeImage: "text-only",
+		},
+		{
+			Slug: "httpx", DisplayName: "httpx", Summary: "An HTTP CLI for stateful login flows, scripted requests, and response extraction.", Tags: []string{"http", "go", "release-indexed"},
+			Popularity: 89, ExampleLine: "httpx version", Type: models.CLITypeNative, EnvironmentKind: models.EnvironmentKindText,
+			SourceType: "native_go", Author: "linlay", GitHubURL: "https://github.com/linlay/cli-httpx", License: "MIT",
+			CreatedAt: time.Date(2026, 3, 26, 10, 0, 0, 0, time.UTC), OriginalCommand: "httpx", Executable: false, RuntimeImage: "text-only",
+		},
+		{
+			Slug: "himalaya", DisplayName: "himalaya", Summary: "A terminal-first email CLI with IMAP, SMTP, templates, and account-aware workflows.", Tags: []string{"email", "rust", "release-indexed"},
+			Popularity: 87, ExampleLine: "himalaya --version", Type: models.CLITypeNative, EnvironmentKind: models.EnvironmentKindText,
+			SourceType: "native_rust", Author: "pimalaya", GitHubURL: "https://github.com/pimalaya/himalaya", License: "MIT",
+			CreatedAt: time.Date(2026, 2, 19, 10, 0, 0, 0, time.UTC), OriginalCommand: "himalaya", Executable: false, RuntimeImage: "text-only",
+		},
 	}
 }
 
@@ -170,6 +188,10 @@ func ExtractSeededCLIs(ctx context.Context, runner *sandbox.Runner) []models.CLI
 	for _, command := range seeds {
 		helpText := fallbackHelp(command)
 		versionText := "docs-only"
+
+		if command.Slug == "dbx" || command.Slug == "httpx" || command.Slug == "himalaya" {
+			versionText = "release-indexed"
+		}
 
 		if command.EnvironmentKind == models.EnvironmentKindSandbox {
 			extractCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 900*time.Millisecond)

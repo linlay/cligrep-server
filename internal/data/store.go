@@ -73,6 +73,9 @@ func (s *Store) init(ctx context.Context) error {
 	if err := s.upgradeAuthSchema(ctx); err != nil {
 		return err
 	}
+	if err := s.upgradeReleaseSchema(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -213,6 +216,181 @@ func (s *Store) GetCLI(ctx context.Context, slug string) (models.CLI, error) {
 		FROM cli_registry c
 		WHERE c.SLUG_ = ? AND c.ENABLED_ = 1`, cliSelectList), slug)
 	return scanCLI(row)
+}
+
+func (s *Store) GetCLIReleases(ctx context.Context, slug string) ([]models.CLIRelease, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ID_, VERSION_, PUBLISHED_AT_, IS_CURRENT_, SOURCE_KIND_, SOURCE_URL_
+		FROM cli_release
+		WHERE CLI_SLUG_ = ?
+		ORDER BY PUBLISHED_AT_ DESC, VERSION_ DESC`, slug)
+	if err != nil {
+		return nil, fmt.Errorf("query cli releases: %w", err)
+	}
+	defer rows.Close()
+
+	var releases []models.CLIRelease
+	releaseIndexByID := make(map[int64]int)
+	for rows.Next() {
+		var (
+			release     models.CLIRelease
+			publishedAt time.Time
+			isCurrent   bool
+		)
+		if err := rows.Scan(
+			&release.ID,
+			&release.Version,
+			&publishedAt,
+			&isCurrent,
+			&release.SourceKind,
+			&release.SourceURL,
+		); err != nil {
+			return nil, fmt.Errorf("scan cli release: %w", err)
+		}
+		release.PublishedAt = publishedAt.UTC()
+		release.IsCurrent = isCurrent
+		release.Assets = []models.CLIReleaseAsset{}
+		releaseIndexByID[release.ID] = len(releases)
+		releases = append(releases, release)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate cli releases: %w", err)
+	}
+	if len(releases) == 0 {
+		return nil, nil
+	}
+
+	assetRows, err := s.db.QueryContext(ctx, `
+		SELECT a.ID_, a.RELEASE_ID_, a.FILE_NAME_, a.DOWNLOAD_URL_, a.OS_, a.ARCH_, a.PACKAGE_KIND_, a.CHECKSUM_URL_, a.SIZE_BYTES_
+		FROM cli_release_asset a
+		JOIN cli_release r ON r.ID_ = a.RELEASE_ID_
+		WHERE r.CLI_SLUG_ = ?
+		ORDER BY r.PUBLISHED_AT_ DESC, a.FILE_NAME_ ASC`, slug)
+	if err != nil {
+		return nil, fmt.Errorf("query cli release assets: %w", err)
+	}
+	defer assetRows.Close()
+
+	for assetRows.Next() {
+		var asset models.CLIReleaseAsset
+		if err := assetRows.Scan(
+			&asset.ID,
+			&asset.ReleaseID,
+			&asset.FileName,
+			&asset.DownloadURL,
+			&asset.OS,
+			&asset.Arch,
+			&asset.PackageKind,
+			&asset.ChecksumURL,
+			&asset.SizeBytes,
+		); err != nil {
+			return nil, fmt.Errorf("scan cli release asset: %w", err)
+		}
+		index, ok := releaseIndexByID[asset.ReleaseID]
+		if !ok {
+			continue
+		}
+		releases[index].Assets = append(releases[index].Assets, asset)
+	}
+	if err := assetRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate cli release assets: %w", err)
+	}
+
+	return releases, nil
+}
+
+func (s *Store) ReplaceCLIReleases(ctx context.Context, slug string, releases []models.CLIRelease) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin replace cli releases: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if len(releases) == 0 {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM cli_release WHERE CLI_SLUG_ = ?`, slug); err != nil {
+			return fmt.Errorf("delete cli releases: %w", err)
+		}
+		return tx.Commit()
+	}
+
+	versions := make([]string, 0, len(releases))
+	for _, release := range releases {
+		versions = append(versions, release.Version)
+		now := time.Now().UTC()
+		result, execErr := tx.ExecContext(ctx, `
+			INSERT INTO cli_release (CLI_SLUG_, VERSION_, PUBLISHED_AT_, IS_CURRENT_, SOURCE_KIND_, SOURCE_URL_, CREATED_AT_, UPDATED_AT_)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON DUPLICATE KEY UPDATE
+				ID_ = LAST_INSERT_ID(ID_),
+				PUBLISHED_AT_ = VALUES(PUBLISHED_AT_),
+				IS_CURRENT_ = VALUES(IS_CURRENT_),
+				SOURCE_KIND_ = VALUES(SOURCE_KIND_),
+				SOURCE_URL_ = VALUES(SOURCE_URL_),
+				UPDATED_AT_ = VALUES(UPDATED_AT_)`,
+			slug,
+			release.Version,
+			release.PublishedAt.UTC(),
+			release.IsCurrent,
+			release.SourceKind,
+			release.SourceURL,
+			now,
+			now,
+		)
+		if execErr != nil {
+			err = fmt.Errorf("upsert cli release %s/%s: %w", slug, release.Version, execErr)
+			return err
+		}
+
+		releaseID, idErr := result.LastInsertId()
+		if idErr != nil {
+			err = fmt.Errorf("cli release id %s/%s: %w", slug, release.Version, idErr)
+			return err
+		}
+		if _, execErr = tx.ExecContext(ctx, `DELETE FROM cli_release_asset WHERE RELEASE_ID_ = ?`, releaseID); execErr != nil {
+			err = fmt.Errorf("delete cli release assets %s/%s: %w", slug, release.Version, execErr)
+			return err
+		}
+
+		for _, asset := range release.Assets {
+			if _, execErr = tx.ExecContext(ctx, `
+				INSERT INTO cli_release_asset (RELEASE_ID_, FILE_NAME_, DOWNLOAD_URL_, OS_, ARCH_, PACKAGE_KIND_, CHECKSUM_URL_, SIZE_BYTES_, CREATED_AT_)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				releaseID,
+				asset.FileName,
+				asset.DownloadURL,
+				asset.OS,
+				asset.Arch,
+				asset.PackageKind,
+				asset.ChecksumURL,
+				asset.SizeBytes,
+				now,
+			); execErr != nil {
+				err = fmt.Errorf("insert cli release asset %s/%s/%s: %w", slug, release.Version, asset.FileName, execErr)
+				return err
+			}
+		}
+	}
+
+	deleteQuery := `DELETE FROM cli_release WHERE CLI_SLUG_ = ?`
+	args := []any{slug}
+	if len(versions) > 0 {
+		deleteQuery += " AND VERSION_ NOT IN (" + strings.TrimRight(strings.Repeat("?,", len(versions)), ",") + ")"
+		for _, version := range versions {
+			args = append(args, version)
+		}
+	}
+	if _, err = tx.ExecContext(ctx, deleteQuery, args...); err != nil {
+		return fmt.Errorf("delete stale cli releases %s: %w", slug, err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit replace cli releases: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) SeedMockUsers(ctx context.Context, usernames []string) error {
@@ -662,6 +840,37 @@ func mysqlSchemaStatements() []string {
 			CREATED_AT_ DATETIME(3) NOT NULL,
 			PRIMARY KEY (SEED_KEY_),
 			CONSTRAINT FK_SEED_EXECUTION_RECORD_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS cli_release (
+			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			CLI_SLUG_ VARCHAR(128) NOT NULL,
+			VERSION_ VARCHAR(128) NOT NULL,
+			PUBLISHED_AT_ DATETIME(3) NOT NULL,
+			IS_CURRENT_ TINYINT(1) NOT NULL DEFAULT 0,
+			SOURCE_KIND_ VARCHAR(64) NOT NULL DEFAULT '',
+			SOURCE_URL_ VARCHAR(1024) NOT NULL DEFAULT '',
+			CREATED_AT_ DATETIME(3) NOT NULL,
+			UPDATED_AT_ DATETIME(3) NOT NULL,
+			PRIMARY KEY (ID_),
+			UNIQUE KEY UK_CLI_RELEASE_SLUG_VERSION (CLI_SLUG_, VERSION_),
+			KEY IDX_CLI_RELEASE_SLUG_PUBLISHED (CLI_SLUG_, PUBLISHED_AT_),
+			KEY IDX_CLI_RELEASE_SLUG_CURRENT (CLI_SLUG_, IS_CURRENT_),
+			CONSTRAINT FK_CLI_RELEASE_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE CASCADE
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+		`CREATE TABLE IF NOT EXISTS cli_release_asset (
+			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+			RELEASE_ID_ BIGINT UNSIGNED NOT NULL,
+			FILE_NAME_ VARCHAR(255) NOT NULL,
+			DOWNLOAD_URL_ VARCHAR(1024) NOT NULL,
+			OS_ VARCHAR(64) NOT NULL DEFAULT '',
+			ARCH_ VARCHAR(64) NOT NULL DEFAULT '',
+			PACKAGE_KIND_ VARCHAR(64) NOT NULL DEFAULT '',
+			CHECKSUM_URL_ VARCHAR(1024) NOT NULL DEFAULT '',
+			SIZE_BYTES_ BIGINT NOT NULL DEFAULT 0,
+			CREATED_AT_ DATETIME(3) NOT NULL,
+			PRIMARY KEY (ID_),
+			KEY IDX_CLI_RELEASE_ASSET_RELEASE (RELEASE_ID_),
+			CONSTRAINT FK_CLI_RELEASE_ASSET_RELEASE FOREIGN KEY (RELEASE_ID_) REFERENCES cli_release (ID_) ON DELETE CASCADE
 		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 	}
 }

@@ -83,6 +83,13 @@ func TestMySQLSchemaStatementsUseUppercaseTrailingUnderscoreColumns(t *testing.T
 		"CONTENT_ MEDIUMTEXT",
 		"CREATE TABLE IF NOT EXISTS seed_execution_record",
 		"SEED_KEY_ VARCHAR(128)",
+		"CREATE TABLE IF NOT EXISTS cli_release",
+		"VERSION_ VARCHAR(128)",
+		"IS_CURRENT_ TINYINT(1)",
+		"SOURCE_URL_ VARCHAR(1024)",
+		"CREATE TABLE IF NOT EXISTS cli_release_asset",
+		"DOWNLOAD_URL_ VARCHAR(1024)",
+		"CHECKSUM_URL_ VARCHAR(1024)",
 	}
 
 	joined := strings.Join(statements, "\n")

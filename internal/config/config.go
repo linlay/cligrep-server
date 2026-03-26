@@ -32,6 +32,8 @@ type Config struct {
 	AuthCookieSecure   bool
 	AuthCookieDomain   string
 	AuthCookieSameSite http.SameSite
+	ReleasesRoot       string
+	ReleasesBaseURL    string
 }
 
 func Load() Config {
@@ -58,6 +60,8 @@ func Load() Config {
 		AuthCookieSecure:   boolEnv("CLIGREP_AUTH_COOKIE_SECURE", false),
 		AuthCookieDomain:   getenv("CLIGREP_AUTH_COOKIE_DOMAIN", ""),
 		AuthCookieSameSite: sameSiteEnv("CLIGREP_AUTH_COOKIE_SAMESITE", http.SameSiteLaxMode),
+		ReleasesRoot:       getenv("CLIGREP_RELEASES_ROOT", "/docker/cli-releases"),
+		ReleasesBaseURL:    getenv("CLIGREP_RELEASES_BASE_URL", "https://cligrep.com/cli-releases"),
 	}
 }
 
