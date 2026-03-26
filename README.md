@@ -65,6 +65,8 @@ CLIGREP_AUTH_COOKIE_NAME=cligrep_session
 CLIGREP_AUTH_COOKIE_SECURE=false
 CLIGREP_AUTH_COOKIE_DOMAIN=
 CLIGREP_AUTH_COOKIE_SAMESITE=Lax
+CLIGREP_RELEASES_ROOT=/docker/cli-releases
+CLIGREP_RELEASES_BASE_URL=https://cligrep.com/cli-releases
 ```
 
 说明：
@@ -81,6 +83,8 @@ CLIGREP_AUTH_COOKIE_SAMESITE=Lax
 - `CLIGREP_AUTH_GOOGLE_SUCCESS_URL` / `CLIGREP_AUTH_GOOGLE_FAILURE_URL`：Google 登录成功或失败后的前端跳转地址；未配置时 Google 登录保持禁用。
 - `CLIGREP_AUTH_SESSION_TTL_HOURS`：站内 session 过期时间。
 - `CLIGREP_AUTH_COOKIE_NAME` / `CLIGREP_AUTH_COOKIE_SECURE` / `CLIGREP_AUTH_COOKIE_DOMAIN` / `CLIGREP_AUTH_COOKIE_SAMESITE`：站内登录态 Cookie 配置。
+- `CLIGREP_RELEASES_ROOT`：CLI 发布目录根路径，默认 `/docker/cli-releases`。
+- `CLIGREP_RELEASES_BASE_URL`：CLI 下载根地址，默认 `https://cligrep.com/cli-releases`。
 
 ## 4. 部署
 ### 仓库内运行布局
@@ -110,6 +114,23 @@ mysql -h <db-host> -P <db-port> -u root -p < scripts/mysql/init.sql
 ```
 
 执行前请先把 `scripts/mysql/init.sql` 中的占位密码替换为真实强密码。应用启动时也会自动尝试创建 `CLIGREP_DB_NAME` 指定的数据库并初始化表结构；若当前账号没有建库权限，请先手工执行上面的 SQL。
+
+### 初始化 CLI release 表与数据
+如果要让 `cli_release` / `cli_release_asset` 以及 `dbx`、`httpx`、`himalaya` 的版本数据立即出现在当前 MySQL，可执行：
+
+```bash
+mysql -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/schema.sql
+go run ./cmd/release-sync
+```
+
+执行完成后可验收：
+
+```bash
+mysql -h <db-host> -P <db-port> -u <db-user> -p -D <db-name> -e "SHOW TABLES LIKE 'cli_release%';"
+mysql -h <db-host> -P <db-port> -u <db-user> -p -D <db-name> -e "SELECT CLI_SLUG_, VERSION_, IS_CURRENT_ FROM cli_release ORDER BY CLI_SLUG_, PUBLISHED_AT_ DESC;"
+```
+
+`release-sync` 会扫描 `CLIGREP_RELEASES_ROOT`，把站内 `/cli-releases/{dbx,httpx,himalaya}` 的版本与资产 upsert 到当前 `CLIGREP_DB_NAME`。
 
 ### 前端联调
 - 前端开发模式默认通过 Vite 代理访问 `http://127.0.0.1:11802`。
@@ -160,6 +181,7 @@ ps -p "$(cat run/cligrep-server.pid)"
 - 执行命令失败：确认 Docker Engine 正常运行，且 `busybox:1.36.1` 与 `python:3.12-slim` 已预拉取。
 - MySQL 连接失败：确认 `CLIGREP_DB_HOST`、`CLIGREP_DB_PORT`、`CLIGREP_DB_NAME`、`CLIGREP_DB_USER`、`CLIGREP_DB_PASSWORD` 正确，且应用账号具备目标库权限。
 - MySQL 表未创建：先执行 `scripts/mysql/init.sql`，再重启服务。
+- release 表或数据未出现：先确认执行过 `scripts/mysql/schema.sql`，再运行 `go run ./cmd/release-sync`。
 
 推荐排查命令：
 ```bash
