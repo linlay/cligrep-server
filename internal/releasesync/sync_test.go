@@ -94,6 +94,51 @@ func TestSyncRejectsMixedLatestTargets(t *testing.T) {
 	}
 }
 
+func TestSyncSupportsTarXZAndUnknownPlatformAssets(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 3, 27, 13, 0, 0, 0, time.UTC)
+
+	writeReleaseFile(t, root, "ffmpeg", "v7.1.0", "ffmpeg-7.1.0.tar.xz", 1024, now)
+	writeReleaseFile(t, root, "ffmpeg", "v7.1.0", "ffmpeg_v7.1.0_checksums.txt", 64, now)
+	writeLatestSymlink(t, root, "ffmpeg", "ffmpeg.tar.xz", "../v7.1.0/ffmpeg-7.1.0.tar.xz")
+	writeLatestSymlink(t, root, "ffmpeg", "checksums.txt", "../v7.1.0/ffmpeg_v7.1.0_checksums.txt")
+
+	writeReleaseFile(t, root, "notebooklm", "v0.3.0", "notebooklm_py-0.3.0-py3-none-any.whl", 2048, now)
+	writeReleaseFile(t, root, "notebooklm", "v0.3.0", "notebooklm-py-0.3.0.tar.gz", 4096, now)
+	writeReleaseFile(t, root, "notebooklm", "v0.3.0", "notebooklm_v0.3.0_checksums.txt", 64, now)
+	writeLatestSymlink(t, root, "notebooklm", "notebooklm.whl", "../v0.3.0/notebooklm_py-0.3.0-py3-none-any.whl")
+	writeLatestSymlink(t, root, "notebooklm", "notebooklm.tar.gz", "../v0.3.0/notebooklm-py-0.3.0.tar.gz")
+	writeLatestSymlink(t, root, "notebooklm", "checksums.txt", "../v0.3.0/notebooklm_v0.3.0_checksums.txt")
+
+	store := &fakeStore{}
+	syncer := New(root, "https://cligrep.com/cli-releases", store)
+
+	if _, err := syncer.Sync(context.Background(), []string{"ffmpeg", "notebooklm"}); err != nil {
+		t.Fatalf("sync releases: %v", err)
+	}
+
+	ffmpegReleases := store.bySlug["ffmpeg"]
+	if len(ffmpegReleases) != 1 {
+		t.Fatalf("expected 1 ffmpeg release, got %d", len(ffmpegReleases))
+	}
+	if got := ffmpegReleases[0].Assets[0].PackageKind; got != "tar.xz" {
+		t.Fatalf("expected tar.xz package kind, got %q", got)
+	}
+
+	notebooklmReleases := store.bySlug["notebooklm"]
+	if len(notebooklmReleases) != 1 {
+		t.Fatalf("expected 1 notebooklm release, got %d", len(notebooklmReleases))
+	}
+	if len(notebooklmReleases[0].Assets) != 2 {
+		t.Fatalf("expected 2 notebooklm assets, got %d", len(notebooklmReleases[0].Assets))
+	}
+	for _, asset := range notebooklmReleases[0].Assets {
+		if asset.OS != "unknown" || asset.Arch != "unknown" {
+			t.Fatalf("expected unknown platform for %s, got os=%q arch=%q", asset.FileName, asset.OS, asset.Arch)
+		}
+	}
+}
+
 func writeReleaseFile(t *testing.T, root, slug, version, name string, size int, modTime time.Time) {
 	t.Helper()
 	dir := filepath.Join(root, slug, version)

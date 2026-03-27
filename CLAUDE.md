@@ -86,6 +86,7 @@
 - 新环境初始化顺序固定为：`init.sql` -> `schema.sql` -> `seed-clis.sql`。
 - 现有环境升级到本次版本时，需要先执行 `migrate-20260327-cleanup.sql`，再部署新代码。
 - `release-sync` 只同步 release 元数据，不再负责导入 CLI catalog。
+- `scripts/import-upstream-clis.sh` 会抓取外部上游 CLI 版本、同步到远端 release 目录，并在本地 staging 目录上执行 `release-sync`。
 - `cli_registry` 的收藏、评论、运行计数在写路径同步维护，首页/详情/搜索直接读取计数列。
 - 服务启动时会探测 Docker CLI、Docker daemon、BusyBox 镜像、Python 镜像；sandbox 未就绪不会阻止 HTTP 服务启动。
 
@@ -102,6 +103,7 @@
 - 启动服务：`./start.sh`
 - 停止服务：`./stop.sh`
 - 同步 release：`go run ./cmd/release-sync`
+- 导入外部上游 CLI：`./scripts/import-upstream-clis.sh`
 
 ## 9. 已知约束与注意事项
 - 运行环境必须具备 Docker CLI 与对应镜像，否则沙箱能力不可用。

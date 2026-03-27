@@ -275,6 +275,8 @@ func classifyAsset(name string) (string, string, string) {
 
 func packageKindForName(name string) string {
 	switch {
+	case strings.HasSuffix(name, ".tar.xz"):
+		return "tar.xz"
 	case strings.HasSuffix(name, ".tar.gz"):
 		return "tar.gz"
 	case strings.HasSuffix(name, ".tgz"):

@@ -84,6 +84,25 @@ go run ./cmd/release-sync dbx httpx
 
 `release-sync` 不再隐式导入 CLI catalog；目标 CLI 不存在时会直接报错。
 
+### 上游 CLI 导入
+这批外部 CLI 的一次性导入入口是：
+
+```bash
+./scripts/import-upstream-clis.sh
+```
+
+默认行为：
+- 抓取 `gh`、`playwright`、`vercel`、`supabase`、`ffmpeg`、`notebooklm` 的最近两个稳定版本。
+- 先在本地 staging 目录整理成 `slug/vX.Y.Z` + `slug/latest` 结构。
+- 同步到 `singapore02:/docker/cli-releases`。
+- 重新导入 `scripts/mysql/seed-clis.sql`，再用 staging 目录执行 `go run ./cmd/release-sync ...` 写入 release 元数据。
+
+如需只做本地 staging 检查，可执行：
+
+```bash
+./scripts/import-upstream-clis.sh --dry-run --keep-stage
+```
+
 ### 前端联调
 - 前端通过 `/api` 和 `/healthz` 访问本服务。
 - 站内认证使用 Google OAuth、本地密码和 HttpOnly session。
@@ -113,4 +132,5 @@ go run ./cmd/release-sync dbx httpx
 - `/healthz` 返回 `sandboxReady=false`：检查 Docker daemon、BusyBox 镜像、Python 镜像。
 - 页面无 CLI 数据：确认已经执行 `scripts/mysql/seed-clis.sql`。
 - release 数据为空：确认已经先导入 catalog，再执行 `go run ./cmd/release-sync`。
+- 上游 CLI 未同步到站点：检查 `./scripts/import-upstream-clis.sh` 输出的 `manifest.json` 和 `warning` 日志，再确认 `release-sync` 是否针对成功 staging 的 slug 执行。
 - 现有库升级后计数异常：重新执行 `scripts/mysql/migrate-20260327-cleanup.sql` 回填计数。
