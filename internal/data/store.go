@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"net"
 	"strings"
 	"time"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/linlay/cligrep-server/internal/config"
 	"github.com/linlay/cligrep-server/internal/models"
+	mysqlschema "github.com/linlay/cligrep-server/scripts/mysql"
 )
 
 type Store struct {
@@ -25,9 +25,7 @@ const cliSelectList = `
 	       c.POPULARITY_, c.RUNTIME_IMAGE_, c.ENABLED_, c.EXAMPLE_LINE_,
 	       c.ENVIRONMENT_KIND_, c.SOURCE_TYPE_, c.AUTHOR_, c.GITHUB_URL_, c.GITEE_URL_,
 	       c.LICENSE_, c.CREATED_AT_, c.ORIGINAL_COMMAND_, c.EXECUTABLE_,
-	       (SELECT COUNT(*) FROM user_favorite f WHERE f.CLI_SLUG_ = c.SLUG_) AS FAVORITE_COUNT_,
-	       (SELECT COUNT(*) FROM user_comment m WHERE m.CLI_SLUG_ = c.SLUG_) AS COMMENT_COUNT_,
-	       (SELECT COUNT(*) FROM sandbox_execution_log e WHERE e.CLI_SLUG_ = c.SLUG_) AS RUN_COUNT_`
+	       c.FAVORITE_COUNT_, c.COMMENT_COUNT_, c.RUN_COUNT_`
 
 func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	if err := ensureDatabase(ctx, cfg); err != nil {
@@ -70,73 +68,6 @@ func (s *Store) init(ctx context.Context) error {
 			return fmt.Errorf("initialize mysql schema: %w", err)
 		}
 	}
-	if err := s.upgradeAuthSchema(ctx); err != nil {
-		return err
-	}
-	if err := s.upgradeReleaseSchema(ctx); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *Store) SeedCLIs(ctx context.Context, clis []models.CLI) error {
-	query := `INSERT INTO cli_registry
-		(SLUG_, DISPLAY_NAME_, SUMMARY_, TYPE_, TAGS_JSON_, HELP_TEXT_, VERSION_TEXT_, POPULARITY_, RUNTIME_IMAGE_, ENABLED_, EXAMPLE_LINE_,
-		 ENVIRONMENT_KIND_, SOURCE_TYPE_, AUTHOR_, GITHUB_URL_, GITEE_URL_, LICENSE_, CREATED_AT_, ORIGINAL_COMMAND_, EXECUTABLE_)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			DISPLAY_NAME_ = VALUES(DISPLAY_NAME_),
-			SUMMARY_ = VALUES(SUMMARY_),
-			TYPE_ = VALUES(TYPE_),
-			TAGS_JSON_ = VALUES(TAGS_JSON_),
-			HELP_TEXT_ = VALUES(HELP_TEXT_),
-			VERSION_TEXT_ = VALUES(VERSION_TEXT_),
-			POPULARITY_ = VALUES(POPULARITY_),
-			RUNTIME_IMAGE_ = VALUES(RUNTIME_IMAGE_),
-			ENABLED_ = VALUES(ENABLED_),
-			EXAMPLE_LINE_ = VALUES(EXAMPLE_LINE_),
-			ENVIRONMENT_KIND_ = VALUES(ENVIRONMENT_KIND_),
-			SOURCE_TYPE_ = VALUES(SOURCE_TYPE_),
-			AUTHOR_ = VALUES(AUTHOR_),
-			GITHUB_URL_ = VALUES(GITHUB_URL_),
-			GITEE_URL_ = VALUES(GITEE_URL_),
-			LICENSE_ = VALUES(LICENSE_),
-			CREATED_AT_ = VALUES(CREATED_AT_),
-			ORIGINAL_COMMAND_ = VALUES(ORIGINAL_COMMAND_),
-			EXECUTABLE_ = VALUES(EXECUTABLE_)`
-
-	for _, cli := range clis {
-		tagsJSON, err := json.Marshal(cli.Tags)
-		if err != nil {
-			return fmt.Errorf("marshal cli tags: %w", err)
-		}
-
-		if _, err := s.db.ExecContext(ctx, query,
-			cli.Slug,
-			cli.DisplayName,
-			cli.Summary,
-			cli.Type,
-			string(tagsJSON),
-			cli.HelpText,
-			cli.VersionText,
-			cli.Popularity,
-			cli.RuntimeImage,
-			cli.Enabled,
-			cli.ExampleLine,
-			cli.EnvironmentKind,
-			cli.SourceType,
-			cli.Author,
-			cli.GitHubURL,
-			cli.GiteeURL,
-			cli.License,
-			cli.CreatedAt.UTC(),
-			cli.OriginalCommand,
-			cli.Executable,
-		); err != nil {
-			return fmt.Errorf("seed cli %s: %w", cli.Slug, err)
-		}
-	}
-
 	return nil
 }
 
@@ -200,7 +131,7 @@ func (s *Store) SearchCLIs(ctx context.Context, query string, limit int) ([]mode
 		  )
 		ORDER BY
 			CASE WHEN c.TYPE_ = 'builtin' THEN 0 ELSE 1 END,
-			(SELECT COUNT(*) FROM user_favorite f WHERE f.CLI_SLUG_ = c.SLUG_) DESC,
+			c.FAVORITE_COUNT_ DESC,
 			c.DISPLAY_NAME_ ASC
 		LIMIT ?`, cliSelectList), pattern, pattern, pattern, pattern, pattern, limit)
 	if err != nil {
@@ -393,62 +324,9 @@ func (s *Store) ReplaceCLIReleases(ctx context.Context, slug string, releases []
 	return nil
 }
 
-func (s *Store) SeedMockUsers(ctx context.Context, usernames []string) error {
-	for _, username := range usernames {
-		if _, err := s.LoginMock(ctx, username); err != nil {
-			return fmt.Errorf("seed mock user %s: %w", username, err)
-		}
-	}
-	return nil
-}
-
-func (s *Store) SeedFavoritesByUsername(ctx context.Context, username, cliSlug string) error {
-	user, err := s.LoginMock(ctx, username)
-	if err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT IGNORE INTO user_favorite (USER_ID_, CLI_SLUG_, CREATED_AT_)
-		VALUES (?, ?, ?)`,
-		user.ID, cliSlug, time.Now().UTC(),
-	); err != nil {
-		return fmt.Errorf("seed favorite %s/%s: %w", username, cliSlug, err)
-	}
-	return nil
-}
-
-func (s *Store) SeedExecutionLog(ctx context.Context, seedKey, cliSlug, line, mode string, durationMS int64, createdAt time.Time) error {
-	result, err := s.db.ExecContext(ctx, `
-		INSERT IGNORE INTO seed_execution_record (SEED_KEY_, CLI_SLUG_, CREATED_AT_)
-		VALUES (?, ?, ?)`,
-		seedKey, cliSlug, createdAt.UTC(),
-	)
-	if err != nil {
-		return fmt.Errorf("seed execution marker %s: %w", seedKey, err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("seed execution marker rows affected: %w", err)
-	}
-	if rows == 0 {
-		return nil
-	}
-
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO sandbox_execution_log (USER_ID_, CLI_SLUG_, LINE_, MODE_, STDOUT_, STDERR_, EXIT_CODE_, DURATION_MS_, CREATED_AT_)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		nil, cliSlug, line, mode, "seeded execution", "", 0, durationMS, createdAt.UTC(),
-	)
-	if err != nil {
-		return fmt.Errorf("seed execution log %s: %w", seedKey, err)
-	}
-	return nil
-}
-
 func (s *Store) SetFavorite(ctx context.Context, mutation models.FavoriteMutation) error {
 	if mutation.Active {
-		_, err := s.db.ExecContext(ctx, `
+		result, err := s.db.ExecContext(ctx, `
 			INSERT IGNORE INTO user_favorite (USER_ID_, CLI_SLUG_, CREATED_AT_)
 			VALUES (?, ?, ?)`,
 			mutation.UserID, mutation.CLISlug, time.Now().UTC(),
@@ -456,11 +334,30 @@ func (s *Store) SetFavorite(ctx context.Context, mutation models.FavoriteMutatio
 		if err != nil {
 			return fmt.Errorf("set favorite: %w", err)
 		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("set favorite rows affected: %w", err)
+		}
+		if rows > 0 {
+			if err := s.incrementCLICounter(ctx, mutation.CLISlug, "FAVORITE_COUNT_", 1); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM user_favorite WHERE USER_ID_ = ? AND CLI_SLUG_ = ?`, mutation.UserID, mutation.CLISlug); err != nil {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM user_favorite WHERE USER_ID_ = ? AND CLI_SLUG_ = ?`, mutation.UserID, mutation.CLISlug)
+	if err != nil {
 		return fmt.Errorf("remove favorite: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("remove favorite rows affected: %w", err)
+	}
+	if rows > 0 {
+		if err := s.incrementCLICounter(ctx, mutation.CLISlug, "FAVORITE_COUNT_", -1); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -492,6 +389,9 @@ func (s *Store) AddComment(ctx context.Context, mutation models.CommentMutation)
 	commentID, err := result.LastInsertId()
 	if err != nil {
 		return models.Comment{}, fmt.Errorf("comment id: %w", err)
+	}
+	if err := s.incrementCLICounter(ctx, mutation.CLISlug, "COMMENT_COUNT_", 1); err != nil {
+		return models.Comment{}, err
 	}
 
 	row := s.db.QueryRowContext(ctx, `
@@ -556,7 +456,7 @@ func (s *Store) LogExecution(ctx context.Context, userID *int64, cliSlug, line, 
 	if err != nil {
 		return fmt.Errorf("insert execution log: %w", err)
 	}
-	return nil
+	return s.incrementCLICounter(ctx, cliSlug, "RUN_COUNT_", 1)
 }
 
 func scanCLIs(rows *sql.Rows) ([]models.CLI, error) {
@@ -655,11 +555,23 @@ func scanComment(row scanner) (models.Comment, error) {
 	return comment, nil
 }
 
-func generateMockIP(username string) string {
-	hasher := fnv.New32a()
-	_, _ = hasher.Write([]byte(strings.ToLower(username)))
-	sum := hasher.Sum32()
-	return fmt.Sprintf("10.24.%d.%d", (sum>>8)&0xff, sum&0xff)
+func (s *Store) incrementCLICounter(ctx context.Context, cliSlug, column string, delta int) error {
+	validColumns := map[string]struct{}{
+		"FAVORITE_COUNT_": {},
+		"COMMENT_COUNT_":  {},
+		"RUN_COUNT_":      {},
+	}
+	if _, ok := validColumns[column]; !ok {
+		return fmt.Errorf("unsupported cli counter column %s", column)
+	}
+
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`
+		UPDATE cli_registry
+		SET %s = GREATEST(%s + ?, 0)
+		WHERE SLUG_ = ?`, column, column), delta, cliSlug); err != nil {
+		return fmt.Errorf("update cli counter %s for %s: %w", column, cliSlug, err)
+	}
+	return nil
 }
 
 func ensureDatabase(ctx context.Context, cfg config.Config) error {
@@ -705,174 +617,7 @@ func mysqlDSN(cfg config.Config, withDatabase bool) string {
 }
 
 func mysqlSchemaStatements() []string {
-	return []string{
-		`CREATE TABLE IF NOT EXISTS cli_registry (
-			SLUG_ VARCHAR(128) NOT NULL,
-			DISPLAY_NAME_ VARCHAR(255) NOT NULL,
-			SUMMARY_ TEXT NOT NULL,
-			TYPE_ VARCHAR(64) NOT NULL,
-			TAGS_JSON_ JSON NOT NULL,
-			HELP_TEXT_ MEDIUMTEXT NOT NULL,
-			VERSION_TEXT_ VARCHAR(255) NOT NULL,
-			POPULARITY_ INT NOT NULL,
-			RUNTIME_IMAGE_ VARCHAR(255) NOT NULL,
-			ENABLED_ TINYINT(1) NOT NULL DEFAULT 1,
-			EXAMPLE_LINE_ VARCHAR(512) NOT NULL,
-			ENVIRONMENT_KIND_ VARCHAR(32) NOT NULL,
-			SOURCE_TYPE_ VARCHAR(64) NOT NULL,
-			AUTHOR_ VARCHAR(255) NOT NULL DEFAULT '',
-			GITHUB_URL_ VARCHAR(512) NOT NULL DEFAULT '',
-			GITEE_URL_ VARCHAR(512) NOT NULL DEFAULT '',
-			LICENSE_ VARCHAR(128) NOT NULL DEFAULT '',
-			CREATED_AT_ DATETIME(3) NOT NULL,
-			ORIGINAL_COMMAND_ VARCHAR(512) NOT NULL DEFAULT '',
-			EXECUTABLE_ TINYINT(1) NOT NULL DEFAULT 1,
-			PRIMARY KEY (SLUG_),
-			KEY IDX_CLI_REGISTRY_ENABLED_ENV_TYPE (ENABLED_, ENVIRONMENT_KIND_, TYPE_)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-		`CREATE TABLE IF NOT EXISTS auth_user (
-			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			USERNAME_ VARCHAR(128) NOT NULL,
-			DISPLAY_NAME_ VARCHAR(255) NOT NULL DEFAULT '',
-			EMAIL_ VARCHAR(255) NOT NULL DEFAULT '',
-			AVATAR_URL_ VARCHAR(1024) NOT NULL DEFAULT '',
-			AUTH_PROVIDER_ VARCHAR(32) NOT NULL DEFAULT 'mock',
-			AUTH_SUB_ VARCHAR(255) NULL,
-			IP_ VARCHAR(64) NOT NULL,
-			CREATED_AT_ DATETIME(3) NOT NULL,
-			UPDATED_AT_ DATETIME(3) NOT NULL,
-			LAST_LOGIN_AT_ DATETIME(3) NULL,
-			PRIMARY KEY (ID_),
-			UNIQUE KEY UK_AUTH_USER_USERNAME (USERNAME_),
-			UNIQUE KEY UK_AUTH_USER_PROVIDER_SUB (AUTH_PROVIDER_, AUTH_SUB_)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-		`CREATE TABLE IF NOT EXISTS auth_local_credential (
-			USER_ID_ BIGINT UNSIGNED NOT NULL,
-			PASSWORD_HASH_ VARCHAR(255) NOT NULL,
-			PASSWORD_UPDATED_AT_ DATETIME(3) NOT NULL,
-			CREATED_AT_ DATETIME(3) NOT NULL,
-			PRIMARY KEY (USER_ID_),
-			CONSTRAINT FK_AUTH_LOCAL_CREDENTIAL_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-		`CREATE TABLE IF NOT EXISTS auth_session (
-			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			USER_ID_ BIGINT UNSIGNED NOT NULL,
-			TOKEN_HASH_ CHAR(64) NOT NULL,
-			EXPIRES_AT_ DATETIME(3) NOT NULL,
-			CREATED_AT_ DATETIME(3) NOT NULL,
-			LAST_SEEN_AT_ DATETIME(3) NOT NULL,
-			USER_AGENT_ VARCHAR(512) NOT NULL DEFAULT '',
-			IP_ VARCHAR(64) NOT NULL DEFAULT '',
-			PRIMARY KEY (ID_),
-			UNIQUE KEY UK_AUTH_SESSION_TOKEN_HASH (TOKEN_HASH_),
-			KEY IDX_AUTH_SESSION_USER_EXPIRES (USER_ID_, EXPIRES_AT_),
-			CONSTRAINT FK_AUTH_SESSION_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-		`CREATE TABLE IF NOT EXISTS auth_login_log (
-			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			USER_ID_ BIGINT UNSIGNED NULL,
-			USERNAME_ VARCHAR(128) NOT NULL DEFAULT '',
-			DISPLAY_NAME_ VARCHAR(255) NOT NULL DEFAULT '',
-			AUTH_METHOD_ VARCHAR(32) NOT NULL,
-			LOGIN_RESULT_ VARCHAR(16) NOT NULL,
-			FAILURE_REASON_ VARCHAR(128) NOT NULL DEFAULT '',
-			IP_ VARCHAR(64) NOT NULL DEFAULT '',
-			USER_AGENT_ VARCHAR(512) NOT NULL DEFAULT '',
-			LOGIN_AT_ DATETIME(3) NOT NULL,
-			PRIMARY KEY (ID_),
-			KEY IDX_AUTH_LOGIN_LOG_USER_AT (USER_ID_, LOGIN_AT_),
-			KEY IDX_AUTH_LOGIN_LOG_METHOD_AT (AUTH_METHOD_, LOGIN_AT_),
-			CONSTRAINT FK_AUTH_LOGIN_LOG_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE SET NULL
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-		`CREATE TABLE IF NOT EXISTS user_favorite (
-			USER_ID_ BIGINT UNSIGNED NOT NULL,
-			CLI_SLUG_ VARCHAR(128) NOT NULL,
-			CREATED_AT_ DATETIME(3) NOT NULL,
-			PRIMARY KEY (USER_ID_, CLI_SLUG_),
-			KEY IDX_USER_FAVORITE_USER_CREATED (USER_ID_, CREATED_AT_),
-			CONSTRAINT FK_USER_FAVORITE_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE CASCADE,
-			CONSTRAINT FK_USER_FAVORITE_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-		`CREATE TABLE IF NOT EXISTS user_comment (
-			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			CLI_SLUG_ VARCHAR(128) NOT NULL,
-			USER_ID_ BIGINT UNSIGNED NOT NULL,
-			BODY_ TEXT NOT NULL,
-			CREATED_AT_ DATETIME(3) NOT NULL,
-			PRIMARY KEY (ID_),
-			KEY IDX_USER_COMMENT_CLI_CREATED (CLI_SLUG_, CREATED_AT_),
-			KEY IDX_USER_COMMENT_USER_CREATED (USER_ID_, CREATED_AT_),
-			CONSTRAINT FK_USER_COMMENT_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE CASCADE,
-			CONSTRAINT FK_USER_COMMENT_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-		`CREATE TABLE IF NOT EXISTS sandbox_execution_log (
-			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			USER_ID_ BIGINT UNSIGNED NULL,
-			CLI_SLUG_ VARCHAR(128) NOT NULL,
-			LINE_ TEXT NOT NULL,
-			MODE_ VARCHAR(64) NOT NULL,
-			STDOUT_ MEDIUMTEXT NOT NULL,
-			STDERR_ MEDIUMTEXT NOT NULL,
-			EXIT_CODE_ INT NOT NULL,
-			DURATION_MS_ BIGINT NOT NULL,
-			CREATED_AT_ DATETIME(3) NOT NULL,
-			PRIMARY KEY (ID_),
-			KEY IDX_SANDBOX_EXECUTION_LOG_CLI_CREATED (CLI_SLUG_, CREATED_AT_),
-			CONSTRAINT FK_SANDBOX_EXECUTION_LOG_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE SET NULL,
-			CONSTRAINT FK_SANDBOX_EXECUTION_LOG_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-		`CREATE TABLE IF NOT EXISTS sandbox_generated_asset (
-			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			KIND_ VARCHAR(64) NOT NULL,
-			NAME_ VARCHAR(255) NOT NULL,
-			CLI_SLUG_ VARCHAR(128) NULL,
-			USER_ID_ BIGINT UNSIGNED NULL,
-			CONTENT_ MEDIUMTEXT NOT NULL,
-			CREATED_AT_ DATETIME(3) NOT NULL,
-			PRIMARY KEY (ID_),
-			KEY IDX_SANDBOX_GENERATED_ASSET_KIND_CREATED (KIND_, CREATED_AT_),
-			CONSTRAINT FK_SANDBOX_GENERATED_ASSET_USER FOREIGN KEY (USER_ID_) REFERENCES auth_user (ID_) ON DELETE SET NULL,
-			CONSTRAINT FK_SANDBOX_GENERATED_ASSET_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE SET NULL
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-		`CREATE TABLE IF NOT EXISTS seed_execution_record (
-			SEED_KEY_ VARCHAR(128) NOT NULL,
-			CLI_SLUG_ VARCHAR(128) NOT NULL,
-			CREATED_AT_ DATETIME(3) NOT NULL,
-			PRIMARY KEY (SEED_KEY_),
-			CONSTRAINT FK_SEED_EXECUTION_RECORD_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-		`CREATE TABLE IF NOT EXISTS cli_release (
-			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			CLI_SLUG_ VARCHAR(128) NOT NULL,
-			VERSION_ VARCHAR(128) NOT NULL,
-			PUBLISHED_AT_ DATETIME(3) NOT NULL,
-			IS_CURRENT_ TINYINT(1) NOT NULL DEFAULT 0,
-			SOURCE_KIND_ VARCHAR(64) NOT NULL DEFAULT '',
-			SOURCE_URL_ VARCHAR(1024) NOT NULL DEFAULT '',
-			CREATED_AT_ DATETIME(3) NOT NULL,
-			UPDATED_AT_ DATETIME(3) NOT NULL,
-			PRIMARY KEY (ID_),
-			UNIQUE KEY UK_CLI_RELEASE_SLUG_VERSION (CLI_SLUG_, VERSION_),
-			KEY IDX_CLI_RELEASE_SLUG_PUBLISHED (CLI_SLUG_, PUBLISHED_AT_),
-			KEY IDX_CLI_RELEASE_SLUG_CURRENT (CLI_SLUG_, IS_CURRENT_),
-			CONSTRAINT FK_CLI_RELEASE_CLI FOREIGN KEY (CLI_SLUG_) REFERENCES cli_registry (SLUG_) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-		`CREATE TABLE IF NOT EXISTS cli_release_asset (
-			ID_ BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-			RELEASE_ID_ BIGINT UNSIGNED NOT NULL,
-			FILE_NAME_ VARCHAR(255) NOT NULL,
-			DOWNLOAD_URL_ VARCHAR(1024) NOT NULL,
-			OS_ VARCHAR(64) NOT NULL DEFAULT '',
-			ARCH_ VARCHAR(64) NOT NULL DEFAULT '',
-			PACKAGE_KIND_ VARCHAR(64) NOT NULL DEFAULT '',
-			CHECKSUM_URL_ VARCHAR(1024) NOT NULL DEFAULT '',
-			SIZE_BYTES_ BIGINT NOT NULL DEFAULT 0,
-			CREATED_AT_ DATETIME(3) NOT NULL,
-			PRIMARY KEY (ID_),
-			KEY IDX_CLI_RELEASE_ASSET_RELEASE (RELEASE_ID_),
-			CONSTRAINT FK_CLI_RELEASE_ASSET_RELEASE FOREIGN KEY (RELEASE_ID_) REFERENCES cli_release (ID_) ON DELETE CASCADE
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
-	}
+	return parseSQLStatements(mysqlschema.Schema())
 }
 
 func quoteIdentifier(value string) string {
@@ -891,10 +636,47 @@ func homepageSortOrder(sort string) string {
 	case "newest":
 		return "c.CREATED_AT_ DESC, c.DISPLAY_NAME_ ASC"
 	case "runs":
-		return "(SELECT COUNT(*) FROM sandbox_execution_log e WHERE e.CLI_SLUG_ = c.SLUG_) DESC, c.DISPLAY_NAME_ ASC"
+		return "c.RUN_COUNT_ DESC, c.DISPLAY_NAME_ ASC"
 	case "favorites", "":
-		return "(SELECT COUNT(*) FROM user_favorite f WHERE f.CLI_SLUG_ = c.SLUG_) DESC, c.DISPLAY_NAME_ ASC"
+		return "c.FAVORITE_COUNT_ DESC, c.DISPLAY_NAME_ ASC"
 	default:
-		return "(SELECT COUNT(*) FROM user_favorite f WHERE f.CLI_SLUG_ = c.SLUG_) DESC, c.DISPLAY_NAME_ ASC"
+		return "c.FAVORITE_COUNT_ DESC, c.DISPLAY_NAME_ ASC"
 	}
+}
+
+func parseSQLStatements(raw string) []string {
+	lines := strings.Split(raw, "\n")
+	statements := make([]string, 0, 16)
+	var builder strings.Builder
+
+	flush := func() {
+		statement := strings.TrimSpace(builder.String())
+		if statement == "" {
+			builder.Reset()
+			return
+		}
+		statement = strings.TrimSuffix(statement, ";")
+		statement = strings.TrimSpace(statement)
+		if statement != "" {
+			statements = append(statements, statement)
+		}
+		builder.Reset()
+	}
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "--") {
+			continue
+		}
+
+		builder.WriteString(line)
+		builder.WriteString("\n")
+
+		if strings.HasSuffix(trimmed, ";") {
+			flush()
+		}
+	}
+	flush()
+
+	return statements
 }

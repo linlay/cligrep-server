@@ -136,10 +136,6 @@ type BuiltinExecRequest struct {
 	UserID *int64 `json:"userId,omitempty"`
 }
 
-type LoginRequest struct {
-	Username string `json:"username"`
-}
-
 type LocalRegisterRequest struct {
 	Username    string `json:"username"`
 	Password    string `json:"password"`
@@ -177,7 +173,6 @@ type AuthMethod string
 const (
 	AuthMethodGoogle        AuthMethod = "google"
 	AuthMethodLocalPassword AuthMethod = "local_password"
-	AuthMethodMock          AuthMethod = "mock"
 )
 
 type AuthResult string

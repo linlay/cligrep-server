@@ -53,10 +53,14 @@ func TestMySQLSchemaStatementsUseUppercaseTrailingUnderscoreColumns(t *testing.T
 	statements := mysqlSchemaStatements()
 
 	required := []string{
+		"USE `cligrep`",
 		"CREATE TABLE IF NOT EXISTS cli_registry",
 		"SLUG_ VARCHAR(128)",
 		"DISPLAY_NAME_ VARCHAR(255)",
 		"CREATED_AT_ DATETIME(3)",
+		"FAVORITE_COUNT_ INT NOT NULL DEFAULT 0",
+		"COMMENT_COUNT_ INT NOT NULL DEFAULT 0",
+		"RUN_COUNT_ INT NOT NULL DEFAULT 0",
 		"CREATE TABLE IF NOT EXISTS auth_user",
 		"USERNAME_ VARCHAR(128)",
 		"DISPLAY_NAME_ VARCHAR(255)",
@@ -81,8 +85,6 @@ func TestMySQLSchemaStatementsUseUppercaseTrailingUnderscoreColumns(t *testing.T
 		"DURATION_MS_ BIGINT",
 		"CREATE TABLE IF NOT EXISTS sandbox_generated_asset",
 		"CONTENT_ MEDIUMTEXT",
-		"CREATE TABLE IF NOT EXISTS seed_execution_record",
-		"SEED_KEY_ VARCHAR(128)",
 		"CREATE TABLE IF NOT EXISTS cli_release",
 		"VERSION_ VARCHAR(128)",
 		"IS_CURRENT_ TINYINT(1)",
@@ -102,9 +104,9 @@ func TestMySQLSchemaStatementsUseUppercaseTrailingUnderscoreColumns(t *testing.T
 
 func TestHomepageSortOrderUsesMySQLTables(t *testing.T) {
 	tests := map[string]string{
-		"":          "user_favorite",
-		"favorites": "user_favorite",
-		"runs":      "sandbox_execution_log",
+		"":          "c.FAVORITE_COUNT_",
+		"favorites": "c.FAVORITE_COUNT_",
+		"runs":      "c.RUN_COUNT_",
 		"newest":    "c.CREATED_AT_",
 	}
 

@@ -12,7 +12,6 @@ import (
 	"github.com/linlay/cligrep-server/internal/data"
 	"github.com/linlay/cligrep-server/internal/models"
 	"github.com/linlay/cligrep-server/internal/sandbox"
-	"github.com/linlay/cligrep-server/internal/seed"
 	"github.com/linlay/cligrep-server/internal/util"
 )
 
@@ -31,27 +30,6 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	runner := sandbox.NewRunner(cfg)
-	clis := seed.ExtractSeededCLIs(ctx, runner)
-	if err := store.SeedCLIs(ctx, clis); err != nil {
-		store.Close()
-		return nil, fmt.Errorf("seed database: %w", err)
-	}
-	if err := store.SeedMockUsers(ctx, seed.MockUsers()); err != nil {
-		store.Close()
-		return nil, fmt.Errorf("seed mock users: %w", err)
-	}
-	for _, favorite := range seed.FavoriteSeeds() {
-		if err := store.SeedFavoritesByUsername(ctx, favorite.Username, favorite.CLISlug); err != nil {
-			store.Close()
-			return nil, fmt.Errorf("seed favorites: %w", err)
-		}
-	}
-	for _, execution := range seed.ExecutionSeeds() {
-		if err := store.SeedExecutionLog(ctx, execution.SeedKey, execution.CLISlug, execution.Line, execution.Mode, execution.DurationMS, execution.CreatedAt); err != nil {
-			store.Close()
-			return nil, fmt.Errorf("seed execution logs: %w", err)
-		}
-	}
 
 	return &App{
 		cfg:      cfg,
@@ -112,10 +90,6 @@ func (a *App) Homepage(ctx context.Context, sort string) (map[string]any, error)
 		"total": total,
 		"sort":  sort,
 	}, nil
-}
-
-func (a *App) Search(ctx context.Context, query string) ([]models.CLI, error) {
-	return a.store.SearchCLIs(ctx, query, 20)
 }
 
 func (a *App) GetCLI(ctx context.Context, slug string) (map[string]any, error) {
@@ -218,14 +192,6 @@ func (a *App) ExecuteCLI(ctx context.Context, request models.ExecRequest) (model
 	}
 
 	return result, nil
-}
-
-func (a *App) Login(ctx context.Context, request models.LoginRequest) (models.User, error) {
-	return a.store.LoginMock(ctx, request.Username)
-}
-
-func (a *App) AnonymousSession(ctx context.Context) (models.User, error) {
-	return a.store.LoginMock(ctx, "anonymous")
 }
 
 func (a *App) RegisterLocal(ctx context.Context, request models.LocalRegisterRequest, metadata models.SessionMetadata) (models.User, string, error) {

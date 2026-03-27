@@ -51,16 +51,6 @@ func (s *Service) Execute(ctx context.Context, request models.BuiltinExecRequest
 			ResolvedCLI:  "builtin:clear",
 			Hints:        []string{"Use grep <query> to search.", "Press Enter on a highlighted result to open it."},
 		}, nil
-	case "login":
-		return s.handleLogin(ctx, tokens)
-	case "logout":
-		return models.BuiltinExecResponse{
-			Action:       "logout",
-			Message:      "Mock session closed. You're back to anonymous@cligrep.",
-			SessionState: "home",
-			ResolvedCLI:  "builtin:logout",
-			Hints:        []string{"Use login <name> to create a mock session."},
-		}, nil
 	case "create":
 		return s.handleCreate(ctx, tokens, request)
 	case "make":
@@ -80,7 +70,7 @@ func (s *Service) Execute(ctx context.Context, request models.BuiltinExecRequest
 				ResolvedCLI:  "builtin:error",
 				SessionState: "execution",
 			},
-			Hints: []string{"Available built-ins: grep, create, make, help, clear, login, logout."},
+			Hints: []string{"Available built-ins: grep, create, make, help, clear."},
 		}, nil
 	}
 }
@@ -109,27 +99,6 @@ func (s *Service) handleGrep(ctx context.Context, tokens []string, request model
 		ResolvedCLI:   "builtin:grep",
 		SearchResults: results,
 		Hints:         []string{"Enter on a highlighted result opens its run mode.", "Esc returns to the homepage grid."},
-	}, nil
-}
-
-func (s *Service) handleLogin(ctx context.Context, tokens []string) (models.BuiltinExecResponse, error) {
-	username := "operator"
-	if len(tokens) > 1 {
-		username = tokens[1]
-	}
-
-	user, err := s.store.LoginMock(ctx, username)
-	if err != nil {
-		return models.BuiltinExecResponse{}, err
-	}
-
-	return models.BuiltinExecResponse{
-		Action:       "login",
-		Message:      fmt.Sprintf("Logged in as %s@%s.", user.Username, user.IP),
-		SessionState: "home",
-		ResolvedCLI:  "builtin:login",
-		User:         &user,
-		Hints:        []string{"Favorites and comments now persist to SQLite.", "Type logout to return to anonymous mode."},
 	}, nil
 }
 
@@ -182,7 +151,7 @@ func (s *Service) handleCreate(ctx context.Context, tokens []string, request mod
 		ResolvedCLI:  "builtin:create",
 		Execution:    &result,
 		Asset:        &asset,
-		Hints:        []string{"The generated file is saved in SQLite as a mock asset.", "Use make dockerfile <cli> for a packaging draft next."},
+		Hints:        []string{"The generated file is saved to the database as an asset.", "Use make dockerfile <cli> for a packaging draft next."},
 	}, nil
 }
 
@@ -271,7 +240,7 @@ func (s *Service) handleMake(ctx context.Context, tokens []string, request model
 			ResolvedCLI:  "builtin:make",
 			SessionState: "execution",
 		},
-		Hints: []string{"Generated artifacts are mock previews backed by SQLite.", "Use Esc to return to search/home."},
+		Hints: []string{"Generated artifacts are previews backed by the database.", "Use Esc to return to search/home."},
 	}, nil
 }
 
@@ -308,7 +277,7 @@ func helpText() string {
 		"make dockerfile <cli>",
 		"  Generate a Dockerfile preview for the selected CLI.",
 		"",
-		"login <name> / logout / clear / help",
+		"clear / help",
 	}, "\n")
 }
 

@@ -1,97 +1,111 @@
 # CLAUDE.md
 
 ## 1. 项目概览
-`cligrep-server` 是 CLI Grep 的后端服务，负责 CLI 数据初始化、搜索与详情查询、评论与收藏持久化、Mock 用户会话，以及受限命令执行。
+`cligrep-server` 是 CLI Grep 的后端服务，负责：
+- CLI 首页列表与详情查询
+- 收藏、评论、执行记录持久化
+- 站内 builtin 命令执行
+- Google OAuth、本地密码、HttpOnly session 用户认证
+- release 目录同步到数据库
 
-该项目使用 MySQL 作为主存储，使用 Docker 运行 BusyBox/Python 沙箱，但服务进程本身以原生 Go 应用运行。
+项目使用 MySQL 作为唯一持久化存储，使用 Docker CLI 驱动 BusyBox / Python 沙箱。CLI catalog 改为手工 SQL 导入，不再在应用启动时自动 seed。
 
 ## 2. 技术栈
 - Go 1.26
 - `net/http`
-- MySQL（`github.com/go-sql-driver/mysql`）
-- Docker CLI（用于沙箱执行）
+- MySQL 8.0+
+- `github.com/go-sql-driver/mysql`
+- Docker CLI
 - Shell 脚本：`build.sh`、`start.sh`、`stop.sh`
 
 ## 3. 架构设计
-- `cmd/server/main.go` 负责加载配置、启动 HTTP 服务、处理优雅退出。
-- `internal/config` 管理环境变量配置读取。
-- `internal/api` 提供 HTTP 路由、序列化与 CORS 中间件。
-- `internal/app` 编排业务流程，聚合 store、sandbox runner 与 builtin service。
-- `internal/data` 负责 MySQL schema 初始化、查询与写入。
-- `internal/sandbox` 使用宿主机 Docker CLI 在受限镜像中执行命令。
-- `internal/seed` 负责初始化 CLI 列表、Mock 用户、收藏与执行记录种子数据。
+- `cmd/server/main.go`：加载配置，初始化应用，启动 HTTP 服务。
+- `cmd/release-sync/main.go`：扫描 release 目录并把版本与资产写入 MySQL。
+- `internal/api`：HTTP 路由、序列化、CORS、中间件、session cookie 处理。
+- `internal/app`：业务编排层，组合 store、sandbox runner、builtin service、Google OAuth provider。
+- `internal/data`：MySQL schema 初始化、认证、查询、写入、计数维护。
+- `internal/builtin`：站内 `grep`、`create`、`make` 命令。
+- `internal/sandbox`：通过宿主机 Docker CLI 执行受限命令。
+- `internal/releasesync`：读取 `CLIGREP_RELEASES_ROOT` 并 upsert `cli_release` / `cli_release_asset`。
+- `internal/util`：命令拆分和输入约束辅助函数。
+- `scripts/mysql`：数据库初始化、schema、catalog seed、一次性迁移 SQL，以及嵌入到 Go 的 schema 文件。
 
 ## 4. 目录结构
-- `cmd/server/`：服务启动入口。
-- `internal/api/`：HTTP handler 与接口层逻辑。
+- `cmd/server/`：主服务入口。
+- `cmd/release-sync/`：release 同步入口。
+- `internal/api/`：HTTP handler 和请求上下文逻辑。
 - `internal/app/`：应用服务层。
-- `internal/config/`：配置加载。
-- `internal/data/`：MySQL 访问与 schema 管理。
-- `internal/models/`：接口 DTO 与领域模型。
-- `internal/sandbox/`：BusyBox / Python 沙箱执行逻辑。
-- `internal/builtin/`：内置命令逻辑。
-- `scripts/mysql/init.sql`：MySQL 建库、授权和建表脚本。
-- `build.sh` / `start.sh` / `stop.sh`：本机部署生命周期脚本。
+- `internal/builtin/`：站内 builtin 命令。
+- `internal/config/`：环境变量配置读取与校验。
+- `internal/data/`：MySQL store、认证与 schema 初始化。
+- `internal/models/`：DTO 与领域模型。
+- `internal/releasesync/`：release 目录扫描与同步。
+- `internal/sandbox/`：BusyBox / Python 沙箱执行。
+- `internal/util/`：命令与字符串辅助工具。
+- `scripts/mysql/`：`init.sql`、`schema.sql`、`seed-clis.sql`、`migrate-20260327-cleanup.sql` 与嵌入 schema 的 Go 文件。
 
 ## 5. 数据结构
-- `cli_registry`：CLI 元信息、展示属性、执行能力、运行环境和来源信息。
-- `auth_user`：匿名用户和 mock 登录用户。
-- `user_favorite`：用户与 CLI 的收藏关系。
-- `user_comment`：CLI 评论内容。
-- `sandbox_execution_log`：执行历史、stdout/stderr、退出码与耗时。
-- `sandbox_generated_asset`：内置命令生成的脚本、Dockerfile、sandbox recipe 等内容。
-- `seed_execution_record`：种子执行日志去重标记。
-- 所有字段统一使用大写蛇形并以下划线结尾，例如 `USER_ID_`、`CREATED_AT_`、`DISPLAY_NAME_`。
-- `models` 中定义了 `CLI`、`ExecutionResult`、`BuiltinExecResponse`、`Comment`、`FavoriteMutation`、`LoginRequest` 等接口数据结构。
+- `cli_registry`：CLI 主表，包含展示属性、运行属性、来源信息，以及 `FAVORITE_COUNT_`、`COMMENT_COUNT_`、`RUN_COUNT_` 三个聚合计数列。
+- `auth_user`：站内用户表，支持 `local` 与 `google` provider。
+- `auth_local_credential`：本地密码哈希。
+- `auth_session`：session token hash、过期时间、访问信息。
+- `auth_login_log`：认证成功/失败日志。
+- `user_favorite`：用户收藏关系。
+- `user_comment`：CLI 评论。
+- `sandbox_execution_log`：CLI / builtin 执行日志。
+- `sandbox_generated_asset`：builtin `create` / `make` 生成的内容。
+- `cli_release`：CLI 版本记录。
+- `cli_release_asset`：release 资产记录。
+- 所有表字段使用大写蛇形并以下划线结尾，例如 `USER_ID_`、`CREATED_AT_`、`DISPLAY_NAME_`。
 
 ## 6. API 定义
-- `GET /healthz`：返回服务健康状态、镜像配置、MySQL 连接目标和运行能力摘要，并附带 `sandboxReady` 与 `sandbox` 详细探测结果。
-- `GET /api/v1/clis/trending`：返回首页热门 CLI 列表。
-- `GET /api/v1/clis/search`：按关键字搜索 CLI。
-- `GET /api/v1/clis/:slug`：返回单个 CLI 详情、评论与示例命令。
-- `POST /api/v1/exec`：执行沙箱 CLI。
-- `POST /api/v1/builtin/exec`：执行网站内置命令。
-- `POST /api/v1/auth/mock/anonymous`：创建匿名会话。
-- `POST /api/v1/auth/mock/login`：按用户名创建 mock 会话。
-- `POST /api/v1/auth/mock/logout`：结束 mock 会话。
-- `GET/POST /api/v1/favorites`：读取或写入收藏。
-- `GET/POST /api/v1/comments`：读取或新增评论。
+- `GET /healthz`：服务健康状态、数据库连接信息、sandbox 探测结果、Google 配置摘要。
+- `GET /api/v1/clis/trending`：首页 CLI 列表，支持排序模式。
+- `GET /api/v1/clis/:slug`：单个 CLI 详情、评论、release、示例命令。
+- `POST /api/v1/exec`：执行普通 CLI 沙箱命令。
+- `POST /api/v1/builtin/exec`：执行站内 builtin 命令。
+- `GET /api/v1/auth/google/start`：发起 Google OAuth。
+- `GET /api/v1/auth/google/callback`：Google OAuth 回调。
+- `POST /api/v1/auth/local/register`：本地账号注册并创建 session。
+- `POST /api/v1/auth/local/login`：本地账号登录并创建 session。
+- `GET /api/v1/auth/me`：读取当前 session 用户。
+- `PATCH /api/v1/auth/me`：更新当前用户显示名。
+- `POST /api/v1/auth/logout`：删除当前 session。
+- `GET /api/v1/favorites` / `POST /api/v1/favorites`：读取或变更收藏。
+- `GET /api/v1/comments` / `POST /api/v1/comments`：读取或新增评论。
+
+已删除的旧接口：
+- `GET /api/v1/clis/search`
+- `POST /api/v1/auth/mock/anonymous`
+- `POST /api/v1/auth/mock/login`
+- `POST /api/v1/auth/mock/logout`
 
 ## 7. 开发要点
-- 配置全部来自环境变量，`.env.example` 是公开契约文件，`.env` 是本地真实值。
-- `CLIGREP_CORS_ORIGIN` 现在直接作用于 HTTP 中间件，支持 `*` 或逗号分隔多个 origin。
-- 数据库配置使用 `CLIGREP_DB_HOST`、`CLIGREP_DB_PORT`、`CLIGREP_DB_NAME`、`CLIGREP_DB_USER`、`CLIGREP_DB_PASSWORD`，且这些值必须在 `.env` 中显式提供。
-- 应用启动时会尝试创建 `CLIGREP_DB_NAME` 指定的数据库并自动初始化 MySQL 表结构；如账号缺少建库权限，先执行 `scripts/mysql/init.sql`，并在执行前替换脚本中的占位密码。
-- 沙箱执行依赖宿主机 Docker，服务本身不容器化。
-- 服务启动时会主动探测 Docker CLI、Docker daemon、BusyBox 镜像、Python 镜像；若未就绪，只打印一次 warning，不阻止 HTTP 服务启动。
-- 运行脚本以仓库内目录为默认目标：`build/`、`logs/`、`run/`。
+- 配置全部来自环境变量；`.env.example` 是公开模板，`.env` 是本地真实值。
+- `scripts/mysql/schema.sql` 是唯一 schema 真相源，Go 启动时通过嵌入 SQL 执行建表语句。
+- 新环境初始化顺序固定为：`init.sql` -> `schema.sql` -> `seed-clis.sql`。
+- 现有环境升级到本次版本时，需要先执行 `migrate-20260327-cleanup.sql`，再部署新代码。
+- `release-sync` 只同步 release 元数据，不再负责导入 CLI catalog。
+- `cli_registry` 的收藏、评论、运行计数在写路径同步维护，首页/详情/搜索直接读取计数列。
+- 服务启动时会探测 Docker CLI、Docker daemon、BusyBox 镜像、Python 镜像；sandbox 未就绪不会阻止 HTTP 服务启动。
 
 ## 8. 开发流程
 - 初始化配置：`cp .env.example .env`
+- 初始化全新数据库：
+  - `mysql -u root -p < scripts/mysql/init.sql`
+  - `mysql -u <db-user> -p < scripts/mysql/schema.sql`
+  - `mysql -u <db-user> -p < scripts/mysql/seed-clis.sql`
+- 现有数据库升级：
+  - `mysql -u <db-user> -p < scripts/mysql/migrate-20260327-cleanup.sql`
 - 执行测试：`go test ./...`
 - 构建二进制：`./build.sh`
 - 启动服务：`./start.sh`
 - 停止服务：`./stop.sh`
-- 联调前端：启动本服务后，再启动 `cligrep-website` 的 Vite 或容器前端。
+- 同步 release：`go run ./cmd/release-sync`
 
 ## 9. 已知约束与注意事项
 - 运行环境必须具备 Docker CLI 与对应镜像，否则沙箱能力不可用。
-- 当前鉴权是 mock 模式，不适用于正式生产认证场景。
-- 当前 schema 依赖 MySQL 8.0+ 的 `JSON`、`utf8mb4` 与 `ON DUPLICATE KEY UPDATE` 能力。
-- `start.sh` 默认用后台进程模式启动，适合轻量部署与联调；更重的生产托管可改用 systemd。
-
-## 10. 沙箱排障
-- 先看启动日志中的 `warning: sandbox is not ready`，再用 `GET /healthz` 确认 `sandbox.issues`。
-- 常用命令：
-  - `docker info`
-  - `docker image inspect busybox:1.36.1`
-  - `docker image inspect python:3.12-slim`
-  - `docker pull busybox:1.36.1`
-  - `docker pull python:3.12-slim`
-
-## 11. 数据库排障
-- 先确认 `.env` 中 MySQL 配置与实际一致，再执行 `scripts/mysql/init.sql` 建库建表。
-- 常用命令：
-  - `mysql -h <db-host> -P <db-port> -u <db-user> -p -e "SHOW DATABASES;"`
-  - `mysql -h <db-host> -P <db-port> -u <db-user> -p -D <db-name> -e "SHOW TABLES;"`
-  - `mysql -h <db-host> -P <db-port> -u <db-user> -p -D <db-name> -e "SHOW CREATE TABLE cli_registry\G"`
+- 新代码默认只支持已经处于正式 auth/release 结构的数据库；不再保留运行时 schema upgrade 兼容层。
+- `schema.sql` 只用于新库建表，不能替代现有库迁移，因为 `CREATE TABLE IF NOT EXISTS` 不会补已有表的缺失列。
+- 如果未执行 `seed-clis.sql`，服务可以启动，但首页和 release-sync 都不会有完整 catalog 数据。
+- 当前 schema 依赖 MySQL 8.0+ 的 `JSON`、`utf8mb4`、`ON DUPLICATE KEY UPDATE` 和 `ADD COLUMN IF NOT EXISTS`。

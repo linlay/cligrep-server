@@ -26,39 +26,6 @@ type sqlExecer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
-func (s *Store) LoginMock(ctx context.Context, username string) (models.User, error) {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		username = "operator"
-	}
-
-	ip := generateMockIP(username)
-	now := time.Now().UTC()
-
-	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO auth_user (USERNAME_, DISPLAY_NAME_, EMAIL_, AVATAR_URL_, AUTH_PROVIDER_, AUTH_SUB_, IP_, CREATED_AT_, UPDATED_AT_, LAST_LOGIN_AT_)
-		VALUES (?, ?, '', '', 'mock', NULL, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			DISPLAY_NAME_ = VALUES(DISPLAY_NAME_),
-			AUTH_PROVIDER_ = 'mock',
-			AUTH_SUB_ = NULL,
-			IP_ = VALUES(IP_),
-			UPDATED_AT_ = VALUES(UPDATED_AT_),
-			LAST_LOGIN_AT_ = VALUES(LAST_LOGIN_AT_)`,
-		username,
-		username,
-		ip,
-		now,
-		now,
-		now,
-	); err != nil {
-		return models.User{}, fmt.Errorf("upsert mock user: %w", err)
-	}
-
-	row := s.db.QueryRowContext(ctx, userSelectList+` WHERE USERNAME_ = ?`, username)
-	return scanUser(row)
-}
-
 func (s *Store) UpsertGoogleUser(ctx context.Context, subject, email, name, picture, ip string) (models.User, error) {
 	subject = strings.TrimSpace(subject)
 	email = strings.TrimSpace(email)

@@ -36,12 +36,9 @@ type Handler struct {
 type application interface {
 	Health(ctx context.Context) map[string]any
 	Homepage(ctx context.Context, sort string) (map[string]any, error)
-	Search(ctx context.Context, query string) ([]models.CLI, error)
 	GetCLI(ctx context.Context, slug string) (map[string]any, error)
 	ExecuteCLI(ctx context.Context, request models.ExecRequest) (models.ExecutionResult, error)
 	ExecuteBuiltin(ctx context.Context, request models.BuiltinExecRequest) (models.BuiltinExecResponse, error)
-	Login(ctx context.Context, request models.LoginRequest) (models.User, error)
-	AnonymousSession(ctx context.Context) (models.User, error)
 	RegisterLocal(ctx context.Context, request models.LocalRegisterRequest, metadata models.SessionMetadata) (models.User, string, error)
 	LoginLocal(ctx context.Context, request models.LocalLoginRequest, metadata models.SessionMetadata) (models.User, string, error)
 	CreateSession(ctx context.Context, userID int64, metadata models.SessionMetadata) (string, error)
@@ -78,7 +75,6 @@ func NewHandler(application application, cfg config.Config) http.Handler {
 func (h *Handler) routes() {
 	h.mux.HandleFunc("/healthz", h.handleHealth)
 	h.mux.HandleFunc("/api/v1/clis/trending", h.handleTrending)
-	h.mux.HandleFunc("/api/v1/clis/search", h.handleSearch)
 	h.mux.HandleFunc("/api/v1/clis/", h.handleCLIBySlug)
 	h.mux.HandleFunc("/api/v1/exec", h.handleExec)
 	h.mux.HandleFunc("/api/v1/builtin/exec", h.handleBuiltinExec)
@@ -88,9 +84,6 @@ func (h *Handler) routes() {
 	h.mux.HandleFunc("/api/v1/auth/local/login", h.handleLocalLogin)
 	h.mux.HandleFunc("/api/v1/auth/me", h.handleMe)
 	h.mux.HandleFunc("/api/v1/auth/logout", h.handleLogout)
-	h.mux.HandleFunc("/api/v1/auth/mock/anonymous", h.handleAnonymous)
-	h.mux.HandleFunc("/api/v1/auth/mock/login", h.handleLogin)
-	h.mux.HandleFunc("/api/v1/auth/mock/logout", h.handleMockLogout)
 	h.mux.HandleFunc("/api/v1/favorites", h.handleFavorites)
 	h.mux.HandleFunc("/api/v1/comments", h.handleComments)
 }
@@ -178,20 +171,6 @@ func (h *Handler) handleTrending(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
-func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	results, err := h.app.Search(r.Context(), r.URL.Query().Get("q"))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": results})
-}
-
 func (h *Handler) handleCLIBySlug(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -201,6 +180,10 @@ func (h *Handler) handleCLIBySlug(w http.ResponseWriter, r *http.Request) {
 	slug := strings.TrimPrefix(r.URL.Path, "/api/v1/clis/")
 	if slug == "" {
 		writeError(w, http.StatusBadRequest, "missing cli slug")
+		return
+	}
+	if slug == "search" {
+		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
 
@@ -260,68 +243,6 @@ func (h *Handler) handleBuiltinExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
-}
-
-func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	var request models.LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json body")
-		return
-	}
-
-	user, err := h.app.Login(r.Context(), request)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	sessionToken, err := h.app.CreateSession(r.Context(), user.ID, requestMetadata(r))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	h.setSessionCookie(w, sessionToken)
-	_ = h.app.RecordAuthAttempt(r.Context(), models.AuthLoginLog{
-		UserID:      &user.ID,
-		Username:    user.Username,
-		DisplayName: user.DisplayName,
-		AuthMethod:  models.AuthMethodMock,
-		LoginResult: models.AuthResultSuccess,
-		IP:          requestIP(r),
-		UserAgent:   strings.TrimSpace(r.UserAgent()),
-		LoginAt:     time.Now().UTC(),
-	})
-	writeJSON(w, http.StatusOK, map[string]any{"user": user})
-}
-
-func (h *Handler) handleAnonymous(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-
-	user, err := h.app.AnonymousSession(r.Context())
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	h.deleteCurrentSession(r)
-	h.clearSessionCookie(w)
-	writeJSON(w, http.StatusOK, map[string]any{"user": user})
-}
-
-func (h *Handler) handleMockLogout(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	h.deleteCurrentSession(r)
-	h.clearSessionCookie(w)
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
 func (h *Handler) handleGoogleStart(w http.ResponseWriter, r *http.Request) {

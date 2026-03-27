@@ -29,7 +29,6 @@ type stubApp struct {
 	updatedProfileUser       models.User
 	updateProfileErr         error
 	createSessionToken       string
-	loginUser                models.User
 	favoritesRequestedUserID int64
 	recordedAuthAttempts     []models.AuthLoginLog
 }
@@ -39,10 +38,6 @@ func (s stubApp) Health(ctx context.Context) map[string]any {
 }
 
 func (stubApp) Homepage(ctx context.Context, sort string) (map[string]any, error) {
-	return nil, nil
-}
-
-func (stubApp) Search(ctx context.Context, query string) ([]models.CLI, error) {
 	return nil, nil
 }
 
@@ -56,17 +51,6 @@ func (stubApp) ExecuteCLI(ctx context.Context, request models.ExecRequest) (mode
 
 func (stubApp) ExecuteBuiltin(ctx context.Context, request models.BuiltinExecRequest) (models.BuiltinExecResponse, error) {
 	return models.BuiltinExecResponse{}, nil
-}
-
-func (s stubApp) Login(ctx context.Context, request models.LoginRequest) (models.User, error) {
-	if s.loginUser.ID != 0 {
-		return s.loginUser, nil
-	}
-	return models.User{ID: 8, Username: request.Username}, nil
-}
-
-func (stubApp) AnonymousSession(ctx context.Context) (models.User, error) {
-	return models.User{ID: 1, Username: "anonymous"}, nil
 }
 
 func (s stubApp) RegisterLocal(ctx context.Context, request models.LocalRegisterRequest, metadata models.SessionMetadata) (models.User, string, error) {
@@ -388,5 +372,29 @@ func TestFavoritesPreferSessionUser(t *testing.T) {
 	}
 	if app.favoritesRequestedUserID != 15 {
 		t.Fatalf("expected session user id 15, got %d", app.favoritesRequestedUserID)
+	}
+}
+
+func TestRemovedMockAuthRoutesReturnNotFound(t *testing.T) {
+	handler := NewHandler(&stubApp{}, testConfig())
+
+	for _, path := range []string{
+		"/api/v1/clis/search",
+		"/api/v1/auth/mock/anonymous",
+		"/api/v1/auth/mock/login",
+		"/api/v1/auth/mock/logout",
+	} {
+		method := http.MethodPost
+		if path == "/api/v1/clis/search" {
+			method = http.MethodGet
+		}
+		req := httptest.NewRequest(method, path, nil)
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("path %s expected 404, got %d", path, rec.Code)
+		}
 	}
 }

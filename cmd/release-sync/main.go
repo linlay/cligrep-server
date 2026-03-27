@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"os"
 	"os/signal"
@@ -10,8 +11,6 @@ import (
 	"github.com/linlay/cligrep-server/internal/config"
 	"github.com/linlay/cligrep-server/internal/data"
 	"github.com/linlay/cligrep-server/internal/releasesync"
-	"github.com/linlay/cligrep-server/internal/sandbox"
-	"github.com/linlay/cligrep-server/internal/seed"
 )
 
 func main() {
@@ -33,12 +32,21 @@ func main() {
 		}
 	}()
 
-	if err := store.SeedCLIs(ctx, seed.ExtractSeededCLIs(ctx, sandbox.NewRunner(cfg))); err != nil {
-		log.Fatalf("seed cli catalog: %v", err)
+	slugs := os.Args[1:]
+	if len(slugs) == 0 {
+		slugs = releasesync.SupportedSlugs()
+	}
+	for _, slug := range slugs {
+		if _, err := store.GetCLI(ctx, slug); err != nil {
+			if err == sql.ErrNoRows {
+				log.Fatalf("missing CLI catalog entry for %s; import scripts/mysql/seed-clis.sql before running release-sync", slug)
+			}
+			log.Fatalf("load cli %s: %v", slug, err)
+		}
 	}
 
 	syncer := releasesync.New(cfg.ReleasesRoot, cfg.ReleasesBaseURL, store)
-	results, err := syncer.Sync(ctx, os.Args[1:])
+	results, err := syncer.Sync(ctx, slugs)
 	if err != nil {
 		log.Fatalf("sync releases: %v", err)
 	}
