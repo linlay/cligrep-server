@@ -108,4 +108,4 @@
 - 新代码默认只支持已经处于正式 auth/release 结构的数据库；不再保留运行时 schema upgrade 兼容层。
 - `schema.sql` 只用于新库建表，不能替代现有库迁移，因为 `CREATE TABLE IF NOT EXISTS` 不会补已有表的缺失列。
 - 如果未执行 `seed-clis.sql`，服务可以启动，但首页和 release-sync 都不会有完整 catalog 数据。
-- 当前 schema 依赖 MySQL 8.0+ 的 `JSON`、`utf8mb4`、`ON DUPLICATE KEY UPDATE` 和 `ADD COLUMN IF NOT EXISTS`。
+- 当前 schema 依赖 MySQL 8.0+ 的 `JSON`、`utf8mb4` 与 `ON DUPLICATE KEY UPDATE`；一次性迁移脚本通过 `information_schema` + 动态 SQL 兼容不支持 `ADD COLUMN IF NOT EXISTS` 的实例。

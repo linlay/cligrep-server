@@ -1,9 +1,49 @@
 USE `cligrep`;
 
-ALTER TABLE cli_registry
-  ADD COLUMN IF NOT EXISTS FAVORITE_COUNT_ INT NOT NULL DEFAULT 0 AFTER EXECUTABLE_,
-  ADD COLUMN IF NOT EXISTS COMMENT_COUNT_ INT NOT NULL DEFAULT 0 AFTER FAVORITE_COUNT_,
-  ADD COLUMN IF NOT EXISTS RUN_COUNT_ INT NOT NULL DEFAULT 0 AFTER COMMENT_COUNT_;
+SET @ddl = IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'cli_registry'
+      AND column_name = 'FAVORITE_COUNT_'
+  ),
+  'SELECT 1',
+  'ALTER TABLE cli_registry ADD COLUMN FAVORITE_COUNT_ INT NOT NULL DEFAULT 0 AFTER EXECUTABLE_'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl = IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'cli_registry'
+      AND column_name = 'COMMENT_COUNT_'
+  ),
+  'SELECT 1',
+  'ALTER TABLE cli_registry ADD COLUMN COMMENT_COUNT_ INT NOT NULL DEFAULT 0 AFTER FAVORITE_COUNT_'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @ddl = IF(
+  EXISTS(
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = DATABASE()
+      AND table_name = 'cli_registry'
+      AND column_name = 'RUN_COUNT_'
+  ),
+  'SELECT 1',
+  'ALTER TABLE cli_registry ADD COLUMN RUN_COUNT_ INT NOT NULL DEFAULT 0 AFTER COMMENT_COUNT_'
+);
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 UPDATE cli_registry c
 LEFT JOIN (
