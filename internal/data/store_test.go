@@ -61,6 +61,9 @@ func TestMySQLSchemaStatementsUseUppercaseTrailingUnderscoreColumns(t *testing.T
 		"FAVORITE_COUNT_ INT NOT NULL DEFAULT 0",
 		"COMMENT_COUNT_ INT NOT NULL DEFAULT 0",
 		"RUN_COUNT_ INT NOT NULL DEFAULT 0",
+		"CREATE TABLE IF NOT EXISTS cli_locale_content",
+		"LOCALE_ VARCHAR(32)",
+		"TAGS_JSON_ JSON NULL",
 		"CREATE TABLE IF NOT EXISTS auth_user",
 		"USERNAME_ VARCHAR(128)",
 		"DISPLAY_NAME_ VARCHAR(255)",
@@ -114,6 +117,20 @@ func TestHomepageSortOrderUsesMySQLTables(t *testing.T) {
 		got := homepageSortOrder(sort)
 		if !strings.Contains(got, want) {
 			t.Fatalf("sort %q expected %q in %q", sort, want, got)
+		}
+	}
+}
+
+func TestNormalizeAvailableLocalesAlwaysIncludesEnglish(t *testing.T) {
+	got := normalizeAvailableLocales("zh,ja,zh")
+	want := []string{"en", "zh", "ja"}
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d locales, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected locale %q at index %d, got %q", want[i], i, got[i])
 		}
 	}
 }

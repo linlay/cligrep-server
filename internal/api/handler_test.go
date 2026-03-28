@@ -41,6 +41,10 @@ func (stubApp) Homepage(ctx context.Context, sort string) (map[string]any, error
 	return nil, nil
 }
 
+func (stubApp) Search(ctx context.Context, query string) (map[string]any, error) {
+	return map[string]any{"items": []any{}, "total": 0, "query": query}, nil
+}
+
 func (stubApp) GetCLI(ctx context.Context, slug string) (map[string]any, error) {
 	return nil, nil
 }
@@ -379,16 +383,11 @@ func TestRemovedMockAuthRoutesReturnNotFound(t *testing.T) {
 	handler := NewHandler(&stubApp{}, testConfig())
 
 	for _, path := range []string{
-		"/api/v1/clis/search",
 		"/api/v1/auth/mock/anonymous",
 		"/api/v1/auth/mock/login",
 		"/api/v1/auth/mock/logout",
 	} {
-		method := http.MethodPost
-		if path == "/api/v1/clis/search" {
-			method = http.MethodGet
-		}
-		req := httptest.NewRequest(method, path, nil)
+		req := httptest.NewRequest(http.MethodPost, path, nil)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -396,5 +395,20 @@ func TestRemovedMockAuthRoutesReturnNotFound(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("path %s expected 404, got %d", path, rec.Code)
 		}
+	}
+}
+
+func TestHandleSearchUsesLocaleHeaders(t *testing.T) {
+	handler := NewHandler(&stubApp{}, testConfig())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clis/search?q=grep", nil)
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	req.Header.Set("X-CLIGREP-Timezone", "Asia/Shanghai")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 }

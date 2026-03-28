@@ -36,3 +36,24 @@ func TestSeedCLIsIncludesImportedUpstreamEntries(t *testing.T) {
 		}
 	}
 }
+
+func TestSeedCLILocalesIncludesChineseBuiltins(t *testing.T) {
+	body, err := os.ReadFile("seed-cli-locales.sql")
+	if err != nil {
+		t.Fatalf("read seed-cli-locales.sql: %v", err)
+	}
+
+	seed := string(body)
+	required := []string{
+		"('builtin-grep', 'zh'",
+		"('builtin-create', 'zh'",
+		"('builtin-make', 'zh'",
+		"('gh', 'zh'",
+	}
+
+	for _, fragment := range required {
+		if !strings.Contains(seed, fragment) {
+			t.Fatalf("expected localized seed to contain %q", fragment)
+		}
+	}
+}

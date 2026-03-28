@@ -25,29 +25,31 @@ const (
 )
 
 type CLI struct {
-	Slug            string          `json:"slug"`
-	DisplayName     string          `json:"displayName"`
-	Summary         string          `json:"summary"`
-	Type            CLIType         `json:"type"`
-	Tags            []string        `json:"tags"`
-	HelpText        string          `json:"helpText"`
-	VersionText     string          `json:"versionText"`
-	Popularity      int             `json:"popularity"`
-	RuntimeImage    string          `json:"runtimeImage"`
-	Enabled         bool            `json:"enabled"`
-	ExampleLine     string          `json:"exampleLine"`
-	FavoriteCount   int             `json:"favoriteCount"`
-	CommentCount    int             `json:"commentCount"`
-	RunCount        int             `json:"runCount"`
-	EnvironmentKind EnvironmentKind `json:"environmentKind"`
-	SourceType      string          `json:"sourceType"`
-	Author          string          `json:"author"`
-	GitHubURL       string          `json:"githubUrl,omitempty"`
-	GiteeURL        string          `json:"giteeUrl,omitempty"`
-	License         string          `json:"license,omitempty"`
-	CreatedAt       time.Time       `json:"createdAt"`
-	OriginalCommand string          `json:"originalCommand,omitempty"`
-	Executable      bool            `json:"executable"`
+	Slug             string          `json:"slug"`
+	DisplayName      string          `json:"displayName"`
+	Summary          string          `json:"summary"`
+	Type             CLIType         `json:"type"`
+	Tags             []string        `json:"tags"`
+	HelpText         string          `json:"helpText"`
+	VersionText      string          `json:"versionText"`
+	Popularity       int             `json:"popularity"`
+	RuntimeImage     string          `json:"runtimeImage"`
+	Enabled          bool            `json:"enabled"`
+	ExampleLine      string          `json:"exampleLine"`
+	FavoriteCount    int             `json:"favoriteCount"`
+	CommentCount     int             `json:"commentCount"`
+	RunCount         int             `json:"runCount"`
+	EnvironmentKind  EnvironmentKind `json:"environmentKind"`
+	SourceType       string          `json:"sourceType"`
+	Author           string          `json:"author"`
+	GitHubURL        string          `json:"githubUrl,omitempty"`
+	GiteeURL         string          `json:"giteeUrl,omitempty"`
+	License          string          `json:"license,omitempty"`
+	CreatedAt        time.Time       `json:"createdAt"`
+	OriginalCommand  string          `json:"originalCommand,omitempty"`
+	Executable       bool            `json:"executable"`
+	ContentLocale    string          `json:"contentLocale"`
+	AvailableLocales []string        `json:"availableLocales"`
 }
 
 type CLIRelease struct {
@@ -129,11 +131,15 @@ type ExecRequest struct {
 	Line         string `json:"line"`
 	UserID       *int64 `json:"userId,omitempty"`
 	ThemeContext string `json:"themeContext,omitempty"`
+	Locale       string `json:"locale,omitempty"`
+	Timezone     string `json:"timezone,omitempty"`
 }
 
 type BuiltinExecRequest struct {
-	Line   string `json:"line"`
-	UserID *int64 `json:"userId,omitempty"`
+	Line     string `json:"line"`
+	UserID   *int64 `json:"userId,omitempty"`
+	Locale   string `json:"locale,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
 }
 
 type LocalRegisterRequest struct {

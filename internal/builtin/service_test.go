@@ -9,7 +9,7 @@ import (
 )
 
 func TestHelpTextOmitsLegacyLoginCommands(t *testing.T) {
-	text := helpText()
+	text := helpText(context.Background())
 	if strings.Contains(text, "login") || strings.Contains(text, "logout") {
 		t.Fatalf("expected help text to omit login/logout, got %q", text)
 	}

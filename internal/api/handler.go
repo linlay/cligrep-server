@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/linlay/cligrep-server/internal/config"
+	appi18n "github.com/linlay/cligrep-server/internal/i18n"
 	"github.com/linlay/cligrep-server/internal/models"
 )
 
@@ -36,6 +37,7 @@ type Handler struct {
 type application interface {
 	Health(ctx context.Context) map[string]any
 	Homepage(ctx context.Context, sort string) (map[string]any, error)
+	Search(ctx context.Context, query string) (map[string]any, error)
 	GetCLI(ctx context.Context, slug string) (map[string]any, error)
 	ExecuteCLI(ctx context.Context, request models.ExecRequest) (models.ExecutionResult, error)
 	ExecuteBuiltin(ctx context.Context, request models.BuiltinExecRequest) (models.BuiltinExecResponse, error)
@@ -75,6 +77,7 @@ func NewHandler(application application, cfg config.Config) http.Handler {
 func (h *Handler) routes() {
 	h.mux.HandleFunc("/healthz", h.handleHealth)
 	h.mux.HandleFunc("/api/v1/clis/trending", h.handleTrending)
+	h.mux.HandleFunc("/api/v1/clis/search", h.handleSearch)
 	h.mux.HandleFunc("/api/v1/clis/", h.handleCLIBySlug)
 	h.mux.HandleFunc("/api/v1/exec", h.handleExec)
 	h.mux.HandleFunc("/api/v1/builtin/exec", h.handleBuiltinExec)
@@ -92,10 +95,10 @@ func (h *Handler) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if origin := h.allowedOrigin(r.Header.Get("Origin")); origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Vary", "Origin, Accept-Language, X-CLIGREP-Locale, X-CLIGREP-Timezone")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		}
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CLIGREP-Locale, X-CLIGREP-Timezone")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 
 		if r.Method == http.MethodOptions {
@@ -103,6 +106,7 @@ func (h *Handler) withMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		r = r.WithContext(requestContext(r))
 		if user, err := h.lookupSessionUser(r); err == nil {
 			r = r.WithContext(withCurrentUser(r.Context(), user))
 		}
@@ -151,7 +155,7 @@ func (h *Handler) allowedOrigin(requestOrigin string) string {
 
 func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 	writeJSON(w, http.StatusOK, h.app.Health(r.Context()))
@@ -159,13 +163,27 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleTrending(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 
 	payload, err := h.app.Homepage(r.Context(), r.URL.Query().Get("sort"))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeLocalizedError(w, r.Context(), http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
+
+	payload, err := h.app.Search(r.Context(), r.URL.Query().Get("q"))
+	if err != nil {
+		writeLocalizedError(w, r.Context(), http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, payload)
@@ -173,17 +191,17 @@ func (h *Handler) handleTrending(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleCLIBySlug(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 
 	slug := strings.TrimPrefix(r.URL.Path, "/api/v1/clis/")
 	if slug == "" {
-		writeError(w, http.StatusBadRequest, "missing cli slug")
+		writeCatalogError(w, r.Context(), http.StatusBadRequest, "missing_cli_slug")
 		return
 	}
 	if slug == "search" {
-		writeError(w, http.StatusNotFound, "not found")
+		writeCatalogError(w, r.Context(), http.StatusNotFound, "not_found")
 		return
 	}
 
@@ -193,7 +211,7 @@ func (h *Handler) handleCLIBySlug(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, sql.ErrNoRows) {
 			status = http.StatusNotFound
 		}
-		writeError(w, status, err.Error())
+		writeLocalizedError(w, r.Context(), status, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, payload)
@@ -201,22 +219,24 @@ func (h *Handler) handleCLIBySlug(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 
 	var request models.ExecRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json body")
+		writeCatalogError(w, r.Context(), http.StatusBadRequest, "invalid_json_body")
 		return
 	}
+	request.Locale = appi18n.LocaleFromContext(r.Context())
+	request.Timezone = appi18n.TimezoneFromContext(r.Context())
 	if user, ok := currentUserFromContext(r.Context()); ok {
 		request.UserID = &user.ID
 	}
 
 	result, err := h.app.ExecuteCLI(r.Context(), request)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeLocalizedError(w, r.Context(), http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -224,22 +244,24 @@ func (h *Handler) handleExec(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleBuiltinExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 
 	var request models.BuiltinExecRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json body")
+		writeCatalogError(w, r.Context(), http.StatusBadRequest, "invalid_json_body")
 		return
 	}
+	request.Locale = appi18n.LocaleFromContext(r.Context())
+	request.Timezone = appi18n.TimezoneFromContext(r.Context())
 	if user, ok := currentUserFromContext(r.Context()); ok {
 		request.UserID = &user.ID
 	}
 
 	response, err := h.app.ExecuteBuiltin(r.Context(), request)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeLocalizedError(w, r.Context(), http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -247,13 +269,13 @@ func (h *Handler) handleBuiltinExec(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleGoogleStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 
 	state, err := generateNonce()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to initialize auth state")
+		writeCatalogError(w, r.Context(), http.StatusInternalServerError, "failed_init_auth_state")
 		return
 	}
 
@@ -269,7 +291,7 @@ func (h *Handler) handleGoogleStart(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 
@@ -340,13 +362,13 @@ func (h *Handler) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleLocalRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 
 	var request models.LocalRegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json body")
+		writeCatalogError(w, r.Context(), http.StatusBadRequest, "invalid_json_body")
 		return
 	}
 
@@ -359,7 +381,7 @@ func (h *Handler) handleLocalRegister(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, models.ErrInvalidUsername), errors.Is(err, models.ErrWeakPassword), errors.Is(err, models.ErrInvalidDisplayName):
 			status = http.StatusBadRequest
 		}
-		writeError(w, status, err.Error())
+		writeLocalizedError(w, r.Context(), status, err)
 		return
 	}
 
@@ -369,13 +391,13 @@ func (h *Handler) handleLocalRegister(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 
 	var request models.LocalLoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json body")
+		writeCatalogError(w, r.Context(), http.StatusBadRequest, "invalid_json_body")
 		return
 	}
 
@@ -388,7 +410,7 @@ func (h *Handler) handleLocalLogin(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, models.ErrInvalidUsername), errors.Is(err, models.ErrWeakPassword), errors.Is(err, models.ErrInvalidDisplayName):
 			status = http.StatusBadRequest
 		}
-		writeError(w, status, err.Error())
+		writeLocalizedError(w, r.Context(), status, err)
 		return
 	}
 
@@ -401,19 +423,19 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		user, ok := currentUserFromContext(r.Context())
 		if !ok {
-			writeError(w, http.StatusUnauthorized, models.ErrUnauthorized.Error())
+			writeLocalizedError(w, r.Context(), http.StatusUnauthorized, models.ErrUnauthorized)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"user": user})
 	case http.MethodPatch:
 		user, ok := currentUserFromContext(r.Context())
 		if !ok {
-			writeError(w, http.StatusUnauthorized, models.ErrUnauthorized.Error())
+			writeLocalizedError(w, r.Context(), http.StatusUnauthorized, models.ErrUnauthorized)
 			return
 		}
 		var request models.UpdateProfileRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid json body")
+			writeCatalogError(w, r.Context(), http.StatusBadRequest, "invalid_json_body")
 			return
 		}
 		updated, err := h.app.UpdateProfile(r.Context(), user.ID, request)
@@ -422,18 +444,18 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, sql.ErrNoRows) {
 				status = http.StatusNotFound
 			}
-			writeError(w, status, err.Error())
+			writeLocalizedError(w, r.Context(), status, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"user": updated})
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
 func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 
@@ -447,31 +469,31 @@ func (h *Handler) handleFavorites(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		userID, err := userIDFromRequest(r, r.URL.Query().Get("userId"))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeLocalizedError(w, r.Context(), http.StatusBadRequest, err)
 			return
 		}
 		items, err := h.app.ListFavorites(r.Context(), userID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeLocalizedError(w, r.Context(), http.StatusInternalServerError, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": items})
 	case http.MethodPost:
 		var request models.FavoriteMutation
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid json body")
+			writeCatalogError(w, r.Context(), http.StatusBadRequest, "invalid_json_body")
 			return
 		}
 		if user, ok := currentUserFromContext(r.Context()); ok {
 			request.UserID = user.ID
 		}
 		if err := h.app.SetFavorite(r.Context(), request); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeLocalizedError(w, r.Context(), http.StatusBadRequest, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
@@ -480,19 +502,19 @@ func (h *Handler) handleComments(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		cliSlug := strings.TrimSpace(r.URL.Query().Get("cliSlug"))
 		if cliSlug == "" {
-			writeError(w, http.StatusBadRequest, "cliSlug is required")
+			writeCatalogError(w, r.Context(), http.StatusBadRequest, "cli_slug_required")
 			return
 		}
 		comments, err := h.app.ListComments(r.Context(), cliSlug)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeLocalizedError(w, r.Context(), http.StatusInternalServerError, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": comments})
 	case http.MethodPost:
 		var request models.CommentMutation
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid json body")
+			writeCatalogError(w, r.Context(), http.StatusBadRequest, "invalid_json_body")
 			return
 		}
 		if user, ok := currentUserFromContext(r.Context()); ok {
@@ -500,12 +522,12 @@ func (h *Handler) handleComments(w http.ResponseWriter, r *http.Request) {
 		}
 		comment, err := h.app.AddComment(r.Context(), request)
 		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeLocalizedError(w, r.Context(), http.StatusBadRequest, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"item": comment})
 	default:
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
 	}
 }
 
@@ -534,6 +556,15 @@ func requestMetadata(r *http.Request) models.SessionMetadata {
 		IP:        requestIP(r),
 		UserAgent: strings.TrimSpace(r.UserAgent()),
 	}
+}
+
+func requestContext(r *http.Request) context.Context {
+	locale := appi18n.ParseLocale(
+		r.Header.Get("X-CLIGREP-Locale"),
+		r.Header.Get("Accept-Language"),
+	)
+	timezone := appi18n.NormalizeTimezone(r.Header.Get("X-CLIGREP-Timezone"))
+	return appi18n.WithRequestContext(r.Context(), locale, timezone)
 }
 
 func requestIP(r *http.Request) string {
@@ -666,4 +697,12 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{
 		"error": message,
 	})
+}
+
+func writeCatalogError(w http.ResponseWriter, ctx context.Context, status int, key string, args ...any) {
+	writeError(w, status, appi18n.Text(ctx, key, args...))
+}
+
+func writeLocalizedError(w http.ResponseWriter, ctx context.Context, status int, err error) {
+	writeError(w, status, appi18n.LocalizeError(ctx, err))
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 
 	"github.com/linlay/cligrep-server/internal/config"
+	"github.com/linlay/cligrep-server/internal/i18n"
 	"github.com/linlay/cligrep-server/internal/models"
 	mysqlschema "github.com/linlay/cligrep-server/scripts/mysql"
 )
@@ -21,11 +22,40 @@ type Store struct {
 }
 
 const cliSelectList = `
-	SELECT c.SLUG_, c.DISPLAY_NAME_, c.SUMMARY_, c.TYPE_, c.TAGS_JSON_, c.HELP_TEXT_, c.VERSION_TEXT_,
-	       c.POPULARITY_, c.RUNTIME_IMAGE_, c.ENABLED_, c.EXAMPLE_LINE_,
-	       c.ENVIRONMENT_KIND_, c.SOURCE_TYPE_, c.AUTHOR_, c.GITHUB_URL_, c.GITEE_URL_,
-	       c.LICENSE_, c.CREATED_AT_, c.ORIGINAL_COMMAND_, c.EXECUTABLE_,
-	       c.FAVORITE_COUNT_, c.COMMENT_COUNT_, c.RUN_COUNT_`
+	SELECT c.SLUG_,
+	       COALESCE(l.DISPLAY_NAME_, c.DISPLAY_NAME_),
+	       COALESCE(l.SUMMARY_, c.SUMMARY_),
+	       c.TYPE_,
+	       COALESCE(l.TAGS_JSON_, c.TAGS_JSON_),
+	       COALESCE(l.HELP_TEXT_, c.HELP_TEXT_),
+	       c.VERSION_TEXT_,
+	       c.POPULARITY_,
+	       c.RUNTIME_IMAGE_,
+	       c.ENABLED_,
+	       c.EXAMPLE_LINE_,
+	       c.ENVIRONMENT_KIND_,
+	       c.SOURCE_TYPE_,
+	       c.AUTHOR_,
+	       c.GITHUB_URL_,
+	       c.GITEE_URL_,
+	       c.LICENSE_,
+	       c.CREATED_AT_,
+	       c.ORIGINAL_COMMAND_,
+	       c.EXECUTABLE_,
+	       c.FAVORITE_COUNT_,
+	       c.COMMENT_COUNT_,
+	       c.RUN_COUNT_,
+	       COALESCE(l.LOCALE_, 'en') AS CONTENT_LOCALE_,
+	       COALESCE(al.LOCALES_, '') AS AVAILABLE_LOCALES_`
+
+const cliLocaleJoin = `
+		LEFT JOIN cli_locale_content l
+		  ON l.CLI_SLUG_ = c.SLUG_ AND l.LOCALE_ = ?
+		LEFT JOIN (
+			SELECT CLI_SLUG_, GROUP_CONCAT(LOCALE_ ORDER BY LOCALE_ SEPARATOR ',') AS LOCALES_
+			FROM cli_locale_content
+			GROUP BY CLI_SLUG_
+		) al ON al.CLI_SLUG_ = c.SLUG_`
 
 func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	if err := ensureDatabase(ctx, cfg); err != nil {
@@ -75,6 +105,7 @@ func (s *Store) ListHomepageCLIs(ctx context.Context, sort string, limit int) ([
 	if limit <= 0 {
 		limit = 12
 	}
+	locale := i18n.LocaleFromContext(ctx)
 
 	total, err := s.CountHomepageCLIs(ctx)
 	if err != nil {
@@ -84,9 +115,11 @@ func (s *Store) ListHomepageCLIs(ctx context.Context, sort string, limit int) ([
 	rows, err := s.db.QueryContext(ctx,
 		fmt.Sprintf(`%s
 		FROM cli_registry c
+		%s
 		WHERE c.ENABLED_ = 1 AND c.ENVIRONMENT_KIND_ != 'WEBSITE'
 		ORDER BY %s
-		LIMIT ?`, cliSelectList, homepageSortOrder(sort)),
+		LIMIT ?`, cliSelectList, cliLocaleJoin, homepageSortOrder(sort)),
+		locale,
 		limit,
 	)
 	if err != nil {
@@ -118,9 +151,11 @@ func (s *Store) SearchCLIs(ctx context.Context, query string, limit int) ([]mode
 		limit = 12
 	}
 
+	locale := i18n.LocaleFromContext(ctx)
 	pattern := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`%s
 		FROM cli_registry c
+		%s
 		WHERE c.ENABLED_ = 1
 		  AND (
 			  LOWER(c.SLUG_) LIKE ?
@@ -128,12 +163,28 @@ func (s *Store) SearchCLIs(ctx context.Context, query string, limit int) ([]mode
 			  OR LOWER(c.SUMMARY_) LIKE ?
 			  OR LOWER(c.HELP_TEXT_) LIKE ?
 			  OR LOWER(CAST(c.TAGS_JSON_ AS CHAR)) LIKE ?
+			  OR EXISTS (
+				  SELECT 1
+				  FROM cli_locale_content s
+				  WHERE s.CLI_SLUG_ = c.SLUG_
+				    AND (
+					  LOWER(COALESCE(s.DISPLAY_NAME_, '')) LIKE ?
+					  OR LOWER(COALESCE(s.SUMMARY_, '')) LIKE ?
+					  OR LOWER(COALESCE(s.HELP_TEXT_, '')) LIKE ?
+					  OR LOWER(CAST(COALESCE(s.TAGS_JSON_, JSON_ARRAY()) AS CHAR)) LIKE ?
+				    )
+			  )
 		  )
 		ORDER BY
 			CASE WHEN c.TYPE_ = 'builtin' THEN 0 ELSE 1 END,
 			c.FAVORITE_COUNT_ DESC,
 			c.DISPLAY_NAME_ ASC
-		LIMIT ?`, cliSelectList), pattern, pattern, pattern, pattern, pattern, limit)
+		LIMIT ?`, cliSelectList, cliLocaleJoin),
+		locale,
+		pattern, pattern, pattern, pattern, pattern,
+		pattern, pattern, pattern, pattern,
+		limit,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("search clis: %w", err)
 	}
@@ -143,9 +194,11 @@ func (s *Store) SearchCLIs(ctx context.Context, query string, limit int) ([]mode
 }
 
 func (s *Store) GetCLI(ctx context.Context, slug string) (models.CLI, error) {
+	locale := i18n.LocaleFromContext(ctx)
 	row := s.db.QueryRowContext(ctx, fmt.Sprintf(`%s
 		FROM cli_registry c
-		WHERE c.SLUG_ = ? AND c.ENABLED_ = 1`, cliSelectList), slug)
+		%s
+		WHERE c.SLUG_ = ? AND c.ENABLED_ = 1`, cliSelectList, cliLocaleJoin), locale, slug)
 	return scanCLI(row)
 }
 
@@ -363,11 +416,13 @@ func (s *Store) SetFavorite(ctx context.Context, mutation models.FavoriteMutatio
 }
 
 func (s *Store) ListFavorites(ctx context.Context, userID int64) ([]models.CLI, error) {
+	locale := i18n.LocaleFromContext(ctx)
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`%s
 		FROM user_favorite f
 		JOIN cli_registry c ON c.SLUG_ = f.CLI_SLUG_
+		%s
 		WHERE f.USER_ID_ = ?
-		ORDER BY f.CREATED_AT_ DESC`, cliSelectList), userID)
+		ORDER BY f.CREATED_AT_ DESC`, cliSelectList, cliLocaleJoin), locale, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list favorites: %w", err)
 	}
@@ -477,11 +532,13 @@ type scanner interface {
 
 func scanCLI(row scanner) (models.CLI, error) {
 	var (
-		cli        models.CLI
-		tagsRaw    []byte
-		enabled    bool
-		executable bool
-		createdAt  time.Time
+		cli                 models.CLI
+		tagsRaw             []byte
+		enabled             bool
+		executable          bool
+		createdAt           time.Time
+		contentLocale       string
+		availableLocalesRaw string
 	)
 
 	if err := row.Scan(
@@ -508,6 +565,8 @@ func scanCLI(row scanner) (models.CLI, error) {
 		&cli.FavoriteCount,
 		&cli.CommentCount,
 		&cli.RunCount,
+		&contentLocale,
+		&availableLocalesRaw,
 	); err != nil {
 		return models.CLI{}, err
 	}
@@ -519,7 +578,26 @@ func scanCLI(row scanner) (models.CLI, error) {
 	cli.Enabled = enabled
 	cli.Executable = executable
 	cli.CreatedAt = createdAt.UTC()
+	cli.ContentLocale = i18n.NormalizeLocale(contentLocale)
+	cli.AvailableLocales = normalizeAvailableLocales(availableLocalesRaw)
 	return cli, nil
+}
+
+func normalizeAvailableLocales(raw string) []string {
+	seen := map[string]struct{}{"en": {}}
+	locales := []string{"en"}
+	for _, part := range strings.Split(strings.TrimSpace(raw), ",") {
+		locale := i18n.NormalizeLocale(part)
+		if locale == "" {
+			continue
+		}
+		if _, ok := seen[locale]; ok {
+			continue
+		}
+		seen[locale] = struct{}{}
+		locales = append(locales, locale)
+	}
+	return locales
 }
 
 func scanUser(row scanner) (models.User, error) {
