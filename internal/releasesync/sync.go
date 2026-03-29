@@ -15,8 +15,6 @@ import (
 
 const sourceKindWebsiteReleaseDir = "website_release_dir"
 
-var defaultSlugs = []string{"dbx", "httpx", "mock", "himalaya"}
-
 type store interface {
 	ReplaceCLIReleases(ctx context.Context, slug string, releases []models.CLIRelease) error
 }
@@ -42,8 +40,30 @@ func New(root, baseURL string, store store) *Syncer {
 	}
 }
 
-func SupportedSlugs() []string {
-	return slices.Clone(defaultSlugs)
+func DiscoverSlugs(root string) ([]string, error) {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return nil, fmt.Errorf("release sync root is required")
+	}
+
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("read release root %s: %w", root, err)
+	}
+
+	slugs := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		slug := strings.TrimSpace(entry.Name())
+		if slug == "" || slug == "latest" {
+			continue
+		}
+		slugs = append(slugs, slug)
+	}
+	slices.Sort(slugs)
+	return slugs, nil
 }
 
 func (s *Syncer) Sync(ctx context.Context, slugs []string) ([]Result, error) {
@@ -57,7 +77,7 @@ func (s *Syncer) Sync(ctx context.Context, slugs []string) ([]Result, error) {
 		return nil, fmt.Errorf("release sync base url is required")
 	}
 	if len(slugs) == 0 {
-		slugs = SupportedSlugs()
+		return nil, fmt.Errorf("release sync slugs are required")
 	}
 
 	results := make([]Result, 0, len(slugs))

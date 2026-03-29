@@ -15,7 +15,7 @@ usage() {
 Usage: ./scripts/import-upstream-clis.sh [--dry-run] [--keep-stage] [--reuse-stage] [--stage-root <dir>] [--target-host <host>] [--target-root <dir>]
 
 Options:
-  --dry-run            Stage releases locally and write a manifest, but skip upload, MySQL seed, and release-sync.
+  --dry-run            Stage releases locally and write a manifest, but skip upload.
   --keep-stage         Do not delete the staging directory after the script exits.
   --reuse-stage        Reuse an existing stage-root and manifest instead of downloading upstream assets again.
   --stage-root <dir>   Reuse an explicit staging directory instead of mktemp.
@@ -75,7 +75,7 @@ require_cmd() {
   fi
 }
 
-for cmd in python3 go rsync curl; do
+for cmd in python3 rsync curl; do
   require_cmd "$cmd"
 done
 
@@ -176,16 +176,5 @@ else
   done
 fi
 
-printf 'refreshing scripts/mysql/seed-clis.sql via Go catalog seeder\n'
-(
-  cd "$ROOT_DIR"
-  go run ./cmd/seed-catalog
-)
-
-printf 'running release-sync from staged releases\n'
-(
-  cd "$ROOT_DIR"
-  CLIGREP_RELEASES_ROOT="$IMPORT_STAGE_ROOT" go run ./cmd/release-sync "${SUCCESS_SLUGS[@]}"
-)
-
-printf 'import complete; mirrored slugs: %s\n' "${SUCCESS_SLUGS[*]}"
+printf 'mirror complete; mirrored slugs: %s\n' "${SUCCESS_SLUGS[*]}"
+printf 'next step: create or publish matching CLI catalog entries via admin/API, then run go run ./cmd/release-sync <slug...> if you want database release metadata refreshed\n'
