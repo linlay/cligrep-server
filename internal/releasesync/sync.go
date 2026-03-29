@@ -15,7 +15,7 @@ import (
 
 const sourceKindWebsiteReleaseDir = "website_release_dir"
 
-var defaultSlugs = []string{"dbx", "httpx", "himalaya"}
+var defaultSlugs = []string{"dbx", "httpx", "mock", "himalaya"}
 
 type store interface {
 	ReplaceCLIReleases(ctx context.Context, slug string, releases []models.CLIRelease) error

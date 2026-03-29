@@ -139,6 +139,16 @@ func TestSyncSupportsTarXZAndUnknownPlatformAssets(t *testing.T) {
 	}
 }
 
+func TestSupportedSlugsIncludesMock(t *testing.T) {
+	slugs := SupportedSlugs()
+	if len(slugs) != 4 {
+		t.Fatalf("expected 4 default slugs, got %d", len(slugs))
+	}
+	if slugs[2] != "mock" {
+		t.Fatalf("expected mock in default slugs, got %v", slugs)
+	}
+}
+
 func writeReleaseFile(t *testing.T, root, slug, version, name string, size int, modTime time.Time) {
 	t.Helper()
 	dir := filepath.Join(root, slug, version)
