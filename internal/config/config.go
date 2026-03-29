@@ -34,6 +34,7 @@ type Config struct {
 	AuthCookieSameSite http.SameSite
 	ReleasesRoot       string
 	ReleasesBaseURL    string
+	AdminEmails        []string
 }
 
 func Load() Config {
@@ -62,6 +63,7 @@ func Load() Config {
 		AuthCookieSameSite: sameSiteEnv("CLIGREP_AUTH_COOKIE_SAMESITE", http.SameSiteLaxMode),
 		ReleasesRoot:       getenv("CLIGREP_RELEASES_ROOT", "/docker/cli-releases"),
 		ReleasesBaseURL:    getenv("CLIGREP_RELEASES_BASE_URL", "https://cligrep.com/cli-releases"),
+		AdminEmails:        stringListEnv("CLIGREP_ADMIN_EMAILS", []string{"linlay@gmail.com"}),
 	}
 }
 
@@ -124,6 +126,32 @@ func boolEnv(key string, fallback bool) bool {
 		}
 	}
 	return fallback
+}
+
+func stringListEnv(key string, fallback []string) []string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return append([]string(nil), fallback...)
+	}
+
+	parts := strings.Split(value, ",")
+	items := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		item := strings.ToLower(strings.TrimSpace(part))
+		if item == "" {
+			continue
+		}
+		if _, ok := seen[item]; ok {
+			continue
+		}
+		seen[item] = struct{}{}
+		items = append(items, item)
+	}
+	if len(items) == 0 {
+		return append([]string(nil), fallback...)
+	}
+	return items
 }
 
 func sameSiteEnv(key string, fallback http.SameSite) http.SameSite {

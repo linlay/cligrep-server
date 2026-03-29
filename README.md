@@ -3,7 +3,7 @@
 ## 1. 项目简介
 `cligrep-server` 是 CLI Grep 的 Go 后端，提供 CLI 首页列表、详情、收藏、评论、受限执行、站内 builtin 命令，以及正式用户认证能力。
 
-服务以宿主机原生进程运行，依赖 MySQL 持久化数据，依赖 Docker CLI 执行受限沙箱命令。CLI catalog 不再由服务启动时自动 seed，改为手工导入 SQL。
+服务以宿主机原生进程运行，依赖 MySQL 持久化数据，依赖 Docker CLI 执行受限沙箱命令。CLI catalog 与 locale 内容不再由服务启动时自动 seed，改为手工导入 SQL 或执行 `go run ./cmd/seed-catalog`。
 
 ## 2. 快速开始
 ### 前置要求
@@ -50,24 +50,38 @@ go test ./...
 按顺序执行一次：
 
 ```bash
-mysql -h <db-host> -P <db-port> -u root -p < scripts/mysql/init.sql
-mysql -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/schema.sql
-mysql -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/seed-clis.sql
+mysql --default-character-set=utf8mb4 -h <db-host> -P <db-port> -u root -p < scripts/mysql/init.sql
+mysql --default-character-set=utf8mb4 -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/schema.sql
+mysql --default-character-set=utf8mb4 -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/seed-clis.sql
+mysql --default-character-set=utf8mb4 -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/seed-cli-locales.sql
 ```
 
 说明：
 - `scripts/mysql/init.sql` 只负责建库、建用户、授权。
 - `scripts/mysql/schema.sql` 是唯一 schema 真相源。
 - `scripts/mysql/seed-clis.sql` 负责导入基础 CLI catalog。
+- `scripts/mysql/seed-cli-locales.sql` 负责导入 locale 文案。
+- 通过 `mysql` CLI 手工导入时，必须显式传 `--default-character-set=utf8mb4`，否则中文 locale seed 可能以错误字符集写入数据库并产生乱码。
+
+如需一次性导入 catalog + locale seed，推荐执行：
+
+```bash
+go run ./cmd/seed-catalog
+```
 
 ### 现有数据库升级到本次版本
 执行一次：
 
 ```bash
 mysql -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/migrate-20260327-cleanup.sql
+mysql --default-character-set=utf8mb4 -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/migrate-20260328-cli-locales.sql
+mysql --default-character-set=utf8mb4 -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/seed-cli-locales.sql
 ```
 
-这个迁移会补 `cli_registry` 计数列、回填收藏/评论/运行计数，并删除 `seed_execution_record`。
+说明：
+- `migrate-20260327-cleanup.sql` 会补 `cli_registry` 计数列、回填收藏/评论/运行计数，并删除 `seed_execution_record`。
+- `migrate-20260328-cli-locales.sql` 会创建 `cli_locale_content`。
+- `seed-cli-locales.sql` 会回灌 locale 文案；如果先前通过未指定 `utf8mb4` 的 `mysql` CLI 导入过中文数据，也应按上面的方式重新执行一次覆盖修复。
 
 ### release 数据同步
 在 CLI catalog 已导入后执行：
@@ -95,7 +109,7 @@ go run ./cmd/release-sync dbx httpx
 - 抓取 `gh`、`playwright`、`vercel`、`supabase`、`ffmpeg`、`notebooklm` 的最近两个稳定版本。
 - 先在本地 staging 目录整理成 `slug/vX.Y.Z` + `slug/latest` 结构。
 - 同步到 `singapore02:/docker/cli-releases`。
-- 重新导入 `scripts/mysql/seed-clis.sql`，再用 staging 目录执行 `go run ./cmd/release-sync ...` 写入 release 元数据。
+- 通过 `go run ./cmd/seed-catalog` 重新导入 catalog + locale seed，再用 staging 目录执行 `go run ./cmd/release-sync ...` 写入 release 元数据。
 
 如需只做本地 staging 检查，可执行：
 
@@ -130,7 +144,8 @@ go run ./cmd/release-sync dbx httpx
 ### 常见排查
 - 启动失败且提示 `validate configuration`：检查 `.env` 中的 `CLIGREP_DB_*` 必填项。
 - `/healthz` 返回 `sandboxReady=false`：检查 Docker daemon、BusyBox 镜像、Python 镜像。
-- 页面无 CLI 数据：确认已经执行 `scripts/mysql/seed-clis.sql`。
+- 页面无 CLI 数据：确认已经执行 `scripts/mysql/seed-clis.sql`，或直接执行 `go run ./cmd/seed-catalog`。
 - release 数据为空：确认已经先导入 catalog，再执行 `go run ./cmd/release-sync`。
 - 上游 CLI 未同步到站点：检查 `./scripts/import-upstream-clis.sh` 输出的 `manifest.json` 和 `warning` 日志，再确认 `release-sync` 是否针对成功 staging 的 slug 执行。
 - 现有库升级后计数异常：重新执行 `scripts/mysql/migrate-20260327-cleanup.sql` 回填计数。
+- 中文 locale 出现乱码：检查导入命令是否显式带了 `--default-character-set=utf8mb4`，然后重新执行 `scripts/mysql/seed-cli-locales.sql` 覆盖修复。

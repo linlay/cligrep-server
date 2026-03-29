@@ -35,14 +35,19 @@ func main() {
 		log.Fatalf("ping mysql database: %v", err)
 	}
 
-	body, err := os.ReadFile("scripts/mysql/seed-clis.sql")
-	if err != nil {
-		log.Fatalf("read seed-clis.sql: %v", err)
-	}
+	for _, path := range []string{
+		"scripts/mysql/seed-clis.sql",
+		"scripts/mysql/seed-cli-locales.sql",
+	} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			log.Fatalf("read %s: %v", path, err)
+		}
 
-	for _, statement := range parseSQLStatements(string(body)) {
-		if _, err := db.ExecContext(ctx, statement); err != nil {
-			log.Fatalf("execute seed statement: %v", err)
+		for _, statement := range parseSQLStatements(string(body)) {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				log.Fatalf("execute seed statement from %s: %v", path, err)
+			}
 		}
 	}
 

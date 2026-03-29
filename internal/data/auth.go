@@ -72,7 +72,14 @@ func (s *Store) UpsertGoogleUser(ctx context.Context, subject, email, name, pict
 	}
 
 	row := s.db.QueryRowContext(ctx, userSelectList+` WHERE AUTH_PROVIDER_ = 'google' AND AUTH_SUB_ = ?`, subject)
-	return scanUser(row)
+	user, err := scanUser(row)
+	if err != nil {
+		return models.User{}, err
+	}
+	if err := s.hydrateUserRoles(ctx, &user); err != nil {
+		return models.User{}, err
+	}
+	return user, nil
 }
 
 func (s *Store) RegisterLocal(ctx context.Context, request models.LocalRegisterRequest, metadata models.SessionMetadata, ttl time.Duration) (models.User, string, error) {
@@ -159,6 +166,10 @@ func (s *Store) RegisterLocal(ctx context.Context, request models.LocalRegisterR
 		now,
 	); err != nil {
 		return models.User{}, "", fmt.Errorf("insert local credential: %w", err)
+	}
+
+	if err := s.syncUserRolesWithExecer(ctx, tx, userID, ""); err != nil {
+		return models.User{}, "", err
 	}
 
 	sessionToken, err := createSessionWithExecer(ctx, tx, userID, metadata, ttl)
@@ -305,8 +316,12 @@ func (s *Store) LoginLocal(ctx context.Context, request models.LocalLoginRequest
 		return models.User{}, "", fmt.Errorf("commit local login tx: %w", err)
 	}
 
-	user.IP = strings.TrimSpace(metadata.IP)
-	return user, sessionToken, nil
+	freshUser, err := s.GetUser(ctx, user.ID)
+	if err != nil {
+		return models.User{}, "", err
+	}
+	freshUser.IP = strings.TrimSpace(metadata.IP)
+	return freshUser, sessionToken, nil
 }
 
 func (s *Store) UpdateUserDisplayName(ctx context.Context, userID int64, displayName string) (models.User, error) {
@@ -368,7 +383,14 @@ func insertAuthAttemptWithExecer(ctx context.Context, execer sqlExecer, logEntry
 
 func (s *Store) GetUser(ctx context.Context, userID int64) (models.User, error) {
 	row := s.db.QueryRowContext(ctx, userSelectList+` WHERE ID_ = ?`, userID)
-	return scanUser(row)
+	user, err := scanUser(row)
+	if err != nil {
+		return models.User{}, err
+	}
+	if err := s.hydrateUserRoles(ctx, &user); err != nil {
+		return models.User{}, err
+	}
+	return user, nil
 }
 
 func (s *Store) CreateSession(ctx context.Context, userID int64, metadata models.SessionMetadata, ttl time.Duration) (string, error) {
@@ -426,6 +448,9 @@ func (s *Store) GetUserBySessionToken(ctx context.Context, sessionToken string) 
 			return models.User{}, models.ErrUnauthorized
 		}
 		return models.User{}, fmt.Errorf("load user from auth session: %w", err)
+	}
+	if err := s.hydrateUserRoles(ctx, &user); err != nil {
+		return models.User{}, err
 	}
 
 	if _, err := s.db.ExecContext(ctx, `

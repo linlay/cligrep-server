@@ -10,6 +10,7 @@ import (
 	"github.com/linlay/cligrep-server/internal/builtin"
 	"github.com/linlay/cligrep-server/internal/config"
 	"github.com/linlay/cligrep-server/internal/data"
+	"github.com/linlay/cligrep-server/internal/i18n"
 	"github.com/linlay/cligrep-server/internal/models"
 	"github.com/linlay/cligrep-server/internal/sandbox"
 	"github.com/linlay/cligrep-server/internal/util"
@@ -92,6 +93,18 @@ func (a *App) Homepage(ctx context.Context, sort string) (map[string]any, error)
 	}, nil
 }
 
+func (a *App) Search(ctx context.Context, query string) (map[string]any, error) {
+	items, err := a.store.SearchCLIs(ctx, query, 20)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"items": items,
+		"total": len(items),
+		"query": strings.TrimSpace(query),
+	}, nil
+}
+
 func (a *App) GetCLI(ctx context.Context, slug string) (map[string]any, error) {
 	cli, err := a.store.GetCLI(ctx, slug)
 	if err != nil {
@@ -133,6 +146,9 @@ func (a *App) GetCLI(ctx context.Context, slug string) (map[string]any, error) {
 }
 
 func (a *App) ExecuteBuiltin(ctx context.Context, request models.BuiltinExecRequest) (models.BuiltinExecResponse, error) {
+	if request.Locale != "" || request.Timezone != "" {
+		ctx = i18n.WithRequestContext(ctx, request.Locale, request.Timezone)
+	}
 	response, err := a.builtins.Execute(ctx, request)
 	if err != nil {
 		return models.BuiltinExecResponse{}, err
@@ -147,6 +163,9 @@ func (a *App) ExecuteBuiltin(ctx context.Context, request models.BuiltinExecRequ
 }
 
 func (a *App) ExecuteCLI(ctx context.Context, request models.ExecRequest) (models.ExecutionResult, error) {
+	if request.Locale != "" || request.Timezone != "" {
+		ctx = i18n.WithRequestContext(ctx, request.Locale, request.Timezone)
+	}
 	line := strings.TrimSpace(request.Line)
 	if line == "" {
 		return models.ExecutionResult{}, errors.New("command line cannot be empty")
@@ -164,6 +183,14 @@ func (a *App) ExecuteCLI(ctx context.Context, request models.ExecRequest) (model
 	}
 	if cli.Type == models.CLITypeBuiltin {
 		return models.ExecutionResult{}, errors.New("builtin commands must use /api/v1/builtin/exec")
+	}
+	if cli.OwnerUserID != nil {
+		if cli.Status != string(models.CLIStatusPublished) {
+			return models.ExecutionResult{}, models.ErrForbidden
+		}
+		if cli.ExecutionTemplate != "busybox-applet" {
+			return models.ExecutionResult{}, errors.New("this CLI is indexed for reference only and cannot be executed in the sandbox")
+		}
 	}
 	if !cli.Executable || cli.EnvironmentKind != models.EnvironmentKindSandbox {
 		return models.ExecutionResult{}, errors.New("this CLI is indexed for reference only and cannot be executed in the sandbox")

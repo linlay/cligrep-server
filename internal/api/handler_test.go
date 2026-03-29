@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,6 +40,10 @@ func (s stubApp) Health(ctx context.Context) map[string]any {
 
 func (stubApp) Homepage(ctx context.Context, sort string) (map[string]any, error) {
 	return nil, nil
+}
+
+func (stubApp) Search(ctx context.Context, query string) (map[string]any, error) {
+	return map[string]any{"items": []any{}, "total": 0, "query": query}, nil
 }
 
 func (stubApp) GetCLI(ctx context.Context, slug string) (map[string]any, error) {
@@ -135,6 +140,58 @@ func (stubApp) ListComments(ctx context.Context, cliSlug string) ([]models.Comme
 
 func (stubApp) AddComment(ctx context.Context, request models.CommentMutation) (models.Comment, error) {
 	return models.Comment{}, nil
+}
+
+func (s stubApp) AdminMe(ctx context.Context, user models.User) models.AdminMe {
+	return models.AdminMe{User: user, CanAccessAdmin: true}
+}
+
+func (s stubApp) ListAdminCLIs(ctx context.Context, user models.User) ([]models.CLI, error) {
+	return []models.CLI{}, nil
+}
+
+func (s stubApp) GetAdminCLI(ctx context.Context, user models.User, slug string) (map[string]any, error) {
+	return map[string]any{"cli": models.CLI{Slug: slug}}, nil
+}
+
+func (s stubApp) CreateAdminCLI(ctx context.Context, user models.User, request models.AdminCLIUpsertRequest) (models.CLI, error) {
+	return models.CLI{Slug: request.Slug}, nil
+}
+
+func (s stubApp) UpdateAdminCLI(ctx context.Context, user models.User, slug string, request models.AdminCLIUpsertRequest) (models.CLI, error) {
+	return models.CLI{Slug: slug}, nil
+}
+
+func (s stubApp) PublishAdminCLI(ctx context.Context, user models.User, slug string) (models.CLI, error) {
+	return models.CLI{Slug: slug, Status: string(models.CLIStatusPublished)}, nil
+}
+
+func (s stubApp) UnpublishAdminCLI(ctx context.Context, user models.User, slug string) (models.CLI, error) {
+	return models.CLI{Slug: slug, Status: string(models.CLIStatusDraft)}, nil
+}
+
+func (s stubApp) DeleteAdminCLI(ctx context.Context, user models.User, slug string) error {
+	return nil
+}
+
+func (s stubApp) CreateAdminRelease(ctx context.Context, user models.User, slug string, request models.AdminReleaseUpsertRequest) (models.CLIRelease, error) {
+	return models.CLIRelease{Version: request.Version}, nil
+}
+
+func (s stubApp) UpdateAdminRelease(ctx context.Context, user models.User, slug, version string, request models.AdminReleaseUpsertRequest) (models.CLIRelease, error) {
+	return models.CLIRelease{Version: version}, nil
+}
+
+func (s stubApp) DeleteAdminRelease(ctx context.Context, user models.User, slug, version string) error {
+	return nil
+}
+
+func (s stubApp) UploadAdminReleaseAsset(ctx context.Context, user models.User, slug, version string, metadata models.CLIReleaseAsset, reader io.Reader) (models.CLIReleaseAsset, error) {
+	return metadata, nil
+}
+
+func (s stubApp) DeleteAdminReleaseAsset(ctx context.Context, user models.User, slug, version string, assetID int64) error {
+	return nil
 }
 
 func testConfig() config.Config {
@@ -379,16 +436,11 @@ func TestRemovedMockAuthRoutesReturnNotFound(t *testing.T) {
 	handler := NewHandler(&stubApp{}, testConfig())
 
 	for _, path := range []string{
-		"/api/v1/clis/search",
 		"/api/v1/auth/mock/anonymous",
 		"/api/v1/auth/mock/login",
 		"/api/v1/auth/mock/logout",
 	} {
-		method := http.MethodPost
-		if path == "/api/v1/clis/search" {
-			method = http.MethodGet
-		}
-		req := httptest.NewRequest(method, path, nil)
+		req := httptest.NewRequest(http.MethodPost, path, nil)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -396,5 +448,20 @@ func TestRemovedMockAuthRoutesReturnNotFound(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("path %s expected 404, got %d", path, rec.Code)
 		}
+	}
+}
+
+func TestHandleSearchUsesLocaleHeaders(t *testing.T) {
+	handler := NewHandler(&stubApp{}, testConfig())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clis/search?q=grep", nil)
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+	req.Header.Set("X-CLIGREP-Timezone", "Asia/Shanghai")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
 	}
 }

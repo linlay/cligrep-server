@@ -42,7 +42,7 @@
 - `internal/releasesync/`：release 目录扫描与同步。
 - `internal/sandbox/`：BusyBox / Python 沙箱执行。
 - `internal/util/`：命令与字符串辅助工具。
-- `scripts/mysql/`：`init.sql`、`schema.sql`、`seed-clis.sql`、`migrate-20260327-cleanup.sql` 与嵌入 schema 的 Go 文件。
+- `scripts/mysql/`：`init.sql`、`schema.sql`、`seed-clis.sql`、`seed-cli-locales.sql`、迁移 SQL，与嵌入 schema 的 Go 文件。
 
 ## 5. 数据结构
 - `cli_registry`：CLI 主表，包含展示属性、运行属性、来源信息，以及 `FAVORITE_COUNT_`、`COMMENT_COUNT_`、`RUN_COUNT_` 三个聚合计数列。
@@ -83,21 +83,27 @@
 ## 7. 开发要点
 - 配置全部来自环境变量；`.env.example` 是公开模板，`.env` 是本地真实值。
 - `scripts/mysql/schema.sql` 是唯一 schema 真相源，Go 启动时通过嵌入 SQL 执行建表语句。
-- 新环境初始化顺序固定为：`init.sql` -> `schema.sql` -> `seed-clis.sql`。
+- 新环境初始化顺序固定为：`init.sql` -> `schema.sql` -> `seed-clis.sql` -> `seed-cli-locales.sql`。
+- 通过 `mysql` CLI 手工导入 SQL 时，必须显式带 `--default-character-set=utf8mb4`，否则中文 locale seed 可能被写成乱码。
 - 现有环境升级到本次版本时，需要先执行 `migrate-20260327-cleanup.sql`，再部署新代码。
+- locale 表接入版本还需要执行 `migrate-20260328-cli-locales.sql`，并重新导入 `seed-cli-locales.sql`。
 - `release-sync` 只同步 release 元数据，不再负责导入 CLI catalog。
-- `scripts/import-upstream-clis.sh` 会抓取外部上游 CLI 版本、同步到远端 release 目录，并在本地 staging 目录上执行 `release-sync`。
+- `scripts/import-upstream-clis.sh` 会抓取外部上游 CLI 版本、同步到远端 release 目录，先执行 `go run ./cmd/seed-catalog`，再在本地 staging 目录上执行 `release-sync`。
 - `cli_registry` 的收藏、评论、运行计数在写路径同步维护，首页/详情/搜索直接读取计数列。
 - 服务启动时会探测 Docker CLI、Docker daemon、BusyBox 镜像、Python 镜像；sandbox 未就绪不会阻止 HTTP 服务启动。
 
 ## 8. 开发流程
 - 初始化配置：`cp .env.example .env`
 - 初始化全新数据库：
-  - `mysql -u root -p < scripts/mysql/init.sql`
-  - `mysql -u <db-user> -p < scripts/mysql/schema.sql`
-  - `mysql -u <db-user> -p < scripts/mysql/seed-clis.sql`
+  - `mysql --default-character-set=utf8mb4 -u root -p < scripts/mysql/init.sql`
+  - `mysql --default-character-set=utf8mb4 -u <db-user> -p < scripts/mysql/schema.sql`
+  - `mysql --default-character-set=utf8mb4 -u <db-user> -p < scripts/mysql/seed-clis.sql`
+  - `mysql --default-character-set=utf8mb4 -u <db-user> -p < scripts/mysql/seed-cli-locales.sql`
+  - 或直接执行 `go run ./cmd/seed-catalog`
 - 现有数据库升级：
   - `mysql -u <db-user> -p < scripts/mysql/migrate-20260327-cleanup.sql`
+  - `mysql --default-character-set=utf8mb4 -u <db-user> -p < scripts/mysql/migrate-20260328-cli-locales.sql`
+  - `mysql --default-character-set=utf8mb4 -u <db-user> -p < scripts/mysql/seed-cli-locales.sql`
 - 执行测试：`go test ./...`
 - 构建二进制：`./build.sh`
 - 启动服务：`./start.sh`
@@ -109,5 +115,6 @@
 - 运行环境必须具备 Docker CLI 与对应镜像，否则沙箱能力不可用。
 - 新代码默认只支持已经处于正式 auth/release 结构的数据库；不再保留运行时 schema upgrade 兼容层。
 - `schema.sql` 只用于新库建表，不能替代现有库迁移，因为 `CREATE TABLE IF NOT EXISTS` 不会补已有表的缺失列。
-- 如果未执行 `seed-clis.sql`，服务可以启动，但首页和 release-sync 都不会有完整 catalog 数据。
+- 如果未执行 `seed-clis.sql` / `seed-cli-locales.sql`，服务可以启动，但首页 locale 内容不会完整。
 - 当前 schema 依赖 MySQL 8.0+ 的 `JSON`、`utf8mb4` 与 `ON DUPLICATE KEY UPDATE`；一次性迁移脚本通过 `information_schema` + 动态 SQL 兼容不支持 `ADD COLUMN IF NOT EXISTS` 的实例。
+- 如果中文 API 返回出现 `åŒ…ç®¡...` 一类乱码，优先检查手工导入时是否遗漏 `--default-character-set=utf8mb4`，然后重新执行 `seed-cli-locales.sql` 覆盖修复。

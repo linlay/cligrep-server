@@ -1,0 +1,44 @@
+USE `cligrep`;
+
+INSERT INTO cli_locale_content (
+  CLI_SLUG_,
+  LOCALE_,
+  DISPLAY_NAME_,
+  SUMMARY_,
+  HELP_TEXT_,
+  TAGS_JSON_,
+  CREATED_AT_,
+  UPDATED_AT_
+) VALUES
+  ('grep', 'zh', 'grep', '在沙箱内使用正则表达式搜索文本。', '在沙箱环境中使用正则表达式搜索文本。示例：grep --help。', '["搜索","busybox","文本"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('find', 'zh', 'find', '在沙箱运行时遍历目录树并匹配文件。', '在沙箱运行时遍历目录树并匹配文件。示例：find --help。', '["搜索","文件系统","busybox"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('sed', 'zh', 'sed', '按行流式编辑文本内容。', '按行流式编辑文本内容。示例：sed --help。', '["转换","busybox","文本"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('awk', 'zh', 'awk', '面向结构化文本的模式扫描与报表生成工具。', '面向结构化文本的模式扫描与报表生成工具。示例：awk --help。', '["报表","busybox","文本"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('ls', 'zh', 'ls', '在隔离容器中列出文件并查看目录。', '在隔离容器中列出文件并查看目录。示例：ls --help。', '["列表","文件系统","busybox"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('sort', 'zh', 'sort', '使用标准 shell 风格参数对文本输入排序。', '使用标准 shell 风格参数对文本输入排序。示例：sort --help。', '["排序","busybox","文本"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('rg', 'zh', 'ripgrep', '基于 Rust 的递归搜索 CLI，忽略规则处理非常快。', '基于 Rust 的递归搜索 CLI，忽略规则处理非常快。在 CLI Grep 中仅供文档查阅。原始命令：rg。示例：rg TODO src。', '["搜索","原生 Rust","文本"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('fd', 'zh', 'fd', '更易用的 Rust 原生 find 替代工具。', '更易用的 Rust 原生 find 替代工具。在 CLI Grep 中仅供文档查阅。原始命令：fd。示例：fd package json。', '["搜索","原生 Rust","文件系统"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('glow', 'zh', 'glow', '面向终端文档阅读的原生 Go Markdown 查看器。', '面向终端文档阅读的原生 Go Markdown 查看器。在 CLI Grep 中仅供文档查阅。原始命令：glow。示例：glow README.md。', '["文档","原生 Go","Markdown"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('uv', 'zh', 'uv', '基于 Rust 的 Python 环境与包管理工具链。', '基于 Rust 的 Python 环境与包管理工具链。在 CLI Grep 中仅供文档查阅。原始命令：uv。示例：uv pip install rich。', '["Python","原生 Rust","包管理"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('npm', 'zh', 'npm', 'Node 包管理器的帮助与用法参考。', 'Node 包管理器的帮助与用法参考。在 CLI Grep 中仅供文档查阅。原始命令：npm。示例：npm install vite。', '["Node","包管理","帮助型"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('apt', 'zh', 'apt', '适用于 Debian 与 Ubuntu 系统的 APT 包管理器参考。', '适用于 Debian 与 Ubuntu 系统的 APT 包管理器参考。在 CLI Grep 中仅供文档查阅。原始命令：apt。示例：apt install ripgrep。', '["Linux","包管理","帮助型"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('mcp-inspect', 'zh', 'mcp inspect', '通过 CLI 包装器查看 MCP 服务清单与桥接元数据。', '通过 CLI 包装器查看 MCP 服务清单与桥接元数据。在 CLI Grep 中仅供文档查阅。原始命令：mcp-inspect。示例：mcp-inspect server.json。', '["MCP","桥接","工具链"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('yt-skim.py', 'zh', 'yt-skim.py', '用于快速浏览转录内容并生成笔记的 Python 脚本 CLI。', '用于快速浏览转录内容并生成笔记的 Python 脚本 CLI。在 CLI Grep 中仅供文档查阅。原始命令：python yt_skim.py。示例：yt-skim.py https://youtu.be/demo。', '["Python","脚本","笔记"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('dbx', 'zh', 'dbx', '面向人类与代理的数据库 CLI，提供明确的查询、更新、结构与导出流程。', '面向人类与代理的数据库 CLI，提供明确的查询、更新、结构与导出流程。在 CLI Grep 中仅供文档查阅。原始命令：dbx。示例：dbx version。', '["数据库","Go","版本索引"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('httpx', 'zh', 'httpx', '面向有状态登录流程、脚本化请求和响应提取的 HTTP CLI。', '面向有状态登录流程、脚本化请求和响应提取的 HTTP CLI。在 CLI Grep 中仅供文档查阅。原始命令：httpx。示例：httpx version。', '["HTTP","Go","版本索引"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('himalaya', 'zh', 'himalaya', '面向终端优先工作流的邮件 CLI，支持 IMAP、SMTP、模板和多账号。', '面向终端优先工作流的邮件 CLI，支持 IMAP、SMTP、模板和多账号。在 CLI Grep 中仅供文档查阅。原始命令：himalaya。示例：himalaya --version。', '["邮件","Rust","版本索引"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('gh', 'zh', 'GitHub CLI', 'GitHub 官方命令行工具，可处理 PR、Issue、仓库和认证流程。', 'GitHub 官方命令行工具，可处理 PR、Issue、仓库和认证流程。在 CLI Grep 中仅供文档查阅。原始命令：gh。示例：gh pr status。', '["GitHub","Git","版本索引","gh"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('playwright', 'zh', 'Playwright CLI', '通过维护中的 npx playwright 工作流暴露浏览器自动化与端到端测试能力。', '通过维护中的 npx playwright 工作流暴露浏览器自动化与端到端测试能力。旧的 microsoft/playwright-cli 仓库已归档；CLI Grep 当前仅索引 npm 分发的命令供参考。原始命令：npx playwright。示例：npx playwright codegen https://example.com。', '["浏览器","测试","自动化","playwright-cli","npx-playwright","版本索引"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('vercel', 'zh', 'Vercel CLI', '在终端中部署项目、检查环境并管理 Vercel 资源。', '在终端中部署项目、检查环境并管理 Vercel 资源。在 CLI Grep 中仅供文档查阅。原始命令：vercel。示例：vercel deploy。', '["部署","托管","npm","版本索引","vercel-cli"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('supabase', 'zh', 'Supabase CLI', '管理本地开发、数据库迁移、认证与托管 Supabase 项目。', '管理本地开发、数据库迁移、认证与托管 Supabase 项目。在 CLI Grep 中仅供文档查阅。原始命令：supabase。示例：supabase start。', '["数据库","后端","Postgres","版本索引","supabase-cli"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('ffmpeg', 'zh', 'FFmpeg', '跨平台音视频处理 CLI，支持编码、转码、封装和分析流程。', '跨平台音视频处理 CLI，支持编码、转码、封装和分析流程。在 CLI Grep 中仅供文档查阅。CLI Grep 镜像了官方源码发布包，因为 GitHub 镜像仓库没有发布 GitHub Releases。原始命令：ffmpeg。示例：ffmpeg -version。', '["音频","视频","媒体","源码发布","版本索引"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('notebooklm', 'zh', 'notebooklm-py', '面向 NotebookLM 的 Python CLI 包装器，用于笔记与工作流自动化。', '面向 NotebookLM 的 Python CLI 包装器，用于笔记与工作流自动化。在 CLI Grep 中仅供文档查阅。原始命令：notebooklm。示例：notebooklm --help。', '["AI","Python","笔记","notebooklm-py","版本索引"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('builtin-grep', 'zh', '内置 grep', '站内原生命令，用于搜索 CLI 目录。', '使用 grep <query> 搜索已索引的 CLI。', '["内置","搜索","核心"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('builtin-create', 'zh', '内置 create', '在网站流程中生成 Python CLI 脚手架。', '使用 create python "your spec"。', '["内置","生成器","Python"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000'),
+  ('builtin-make', 'zh', '内置 make', '为 CLI 生成 Dockerfile 和沙箱配置预览。', '使用 make sandbox <cli> 或 make dockerfile <cli>。', '["内置","Docker","沙箱"]', '2026-03-28 00:00:00.000', '2026-03-28 00:00:00.000')
+ON DUPLICATE KEY UPDATE
+  DISPLAY_NAME_ = VALUES(DISPLAY_NAME_),
+  SUMMARY_ = VALUES(SUMMARY_),
+  HELP_TEXT_ = VALUES(HELP_TEXT_),
+  TAGS_JSON_ = VALUES(TAGS_JSON_),
+  UPDATED_AT_ = VALUES(UPDATED_AT_);

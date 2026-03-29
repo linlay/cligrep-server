@@ -61,6 +61,9 @@ func TestMySQLSchemaStatementsUseUppercaseTrailingUnderscoreColumns(t *testing.T
 		"FAVORITE_COUNT_ INT NOT NULL DEFAULT 0",
 		"COMMENT_COUNT_ INT NOT NULL DEFAULT 0",
 		"RUN_COUNT_ INT NOT NULL DEFAULT 0",
+		"CREATE TABLE IF NOT EXISTS cli_locale_content",
+		"LOCALE_ VARCHAR(32)",
+		"TAGS_JSON_ JSON NULL",
 		"CREATE TABLE IF NOT EXISTS auth_user",
 		"USERNAME_ VARCHAR(128)",
 		"DISPLAY_NAME_ VARCHAR(255)",
@@ -69,6 +72,10 @@ func TestMySQLSchemaStatementsUseUppercaseTrailingUnderscoreColumns(t *testing.T
 		"AUTH_SUB_ VARCHAR(255)",
 		"CREATE TABLE IF NOT EXISTS auth_local_credential",
 		"PASSWORD_HASH_ VARCHAR(255)",
+		"CREATE TABLE IF NOT EXISTS auth_role",
+		"ROLE_KEY_ VARCHAR(64)",
+		"CREATE TABLE IF NOT EXISTS auth_user_role",
+		"ROLE_ID_ BIGINT UNSIGNED",
 		"CREATE TABLE IF NOT EXISTS auth_session",
 		"TOKEN_HASH_ CHAR(64)",
 		"EXPIRES_AT_ DATETIME(3)",
@@ -92,6 +99,10 @@ func TestMySQLSchemaStatementsUseUppercaseTrailingUnderscoreColumns(t *testing.T
 		"CREATE TABLE IF NOT EXISTS cli_release_asset",
 		"DOWNLOAD_URL_ VARCHAR(1024)",
 		"CHECKSUM_URL_ VARCHAR(1024)",
+		"OWNER_USER_ID_ BIGINT UNSIGNED",
+		"STATUS_ VARCHAR(32) NOT NULL DEFAULT 'published'",
+		"EXECUTION_TEMPLATE_ VARCHAR(64) NOT NULL DEFAULT ''",
+		"STORAGE_PATH_ VARCHAR(1024)",
 	}
 
 	joined := strings.Join(statements, "\n")
@@ -114,6 +125,20 @@ func TestHomepageSortOrderUsesMySQLTables(t *testing.T) {
 		got := homepageSortOrder(sort)
 		if !strings.Contains(got, want) {
 			t.Fatalf("sort %q expected %q in %q", sort, want, got)
+		}
+	}
+}
+
+func TestNormalizeAvailableLocalesAlwaysIncludesEnglish(t *testing.T) {
+	got := normalizeAvailableLocales("zh,ja,zh")
+	want := []string{"en", "zh", "ja"}
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d locales, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("expected locale %q at index %d, got %q", want[i], i, got[i])
 		}
 	}
 }

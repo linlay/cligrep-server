@@ -12,20 +12,58 @@ import (
 	"github.com/go-sql-driver/mysql"
 
 	"github.com/linlay/cligrep-server/internal/config"
+	"github.com/linlay/cligrep-server/internal/i18n"
 	"github.com/linlay/cligrep-server/internal/models"
 	mysqlschema "github.com/linlay/cligrep-server/scripts/mysql"
 )
 
 type Store struct {
-	db *sql.DB
+	db              *sql.DB
+	adminEmails     map[string]struct{}
+	releasesRoot    string
+	releasesBaseURL string
 }
 
 const cliSelectList = `
-	SELECT c.SLUG_, c.DISPLAY_NAME_, c.SUMMARY_, c.TYPE_, c.TAGS_JSON_, c.HELP_TEXT_, c.VERSION_TEXT_,
-	       c.POPULARITY_, c.RUNTIME_IMAGE_, c.ENABLED_, c.EXAMPLE_LINE_,
-	       c.ENVIRONMENT_KIND_, c.SOURCE_TYPE_, c.AUTHOR_, c.GITHUB_URL_, c.GITEE_URL_,
-	       c.LICENSE_, c.CREATED_AT_, c.ORIGINAL_COMMAND_, c.EXECUTABLE_,
-	       c.FAVORITE_COUNT_, c.COMMENT_COUNT_, c.RUN_COUNT_`
+	SELECT c.SLUG_,
+	       COALESCE(l.DISPLAY_NAME_, c.DISPLAY_NAME_),
+	       COALESCE(l.SUMMARY_, c.SUMMARY_),
+	       c.TYPE_,
+	       COALESCE(l.TAGS_JSON_, c.TAGS_JSON_),
+	       COALESCE(l.HELP_TEXT_, c.HELP_TEXT_),
+	       c.VERSION_TEXT_,
+	       c.POPULARITY_,
+	       c.RUNTIME_IMAGE_,
+	       c.ENABLED_,
+	       c.EXAMPLE_LINE_,
+	       c.ENVIRONMENT_KIND_,
+	       c.SOURCE_TYPE_,
+	       c.AUTHOR_,
+	       c.GITHUB_URL_,
+	       c.GITEE_URL_,
+	       c.LICENSE_,
+	       c.CREATED_AT_,
+	       c.UPDATED_AT_,
+	       c.PUBLISHED_AT_,
+	       c.ORIGINAL_COMMAND_,
+	       c.EXECUTABLE_,
+	       c.FAVORITE_COUNT_,
+	       c.COMMENT_COUNT_,
+	       c.RUN_COUNT_,
+	       c.OWNER_USER_ID_,
+	       c.STATUS_,
+	       c.EXECUTION_TEMPLATE_,
+	       COALESCE(l.LOCALE_, 'en') AS CONTENT_LOCALE_,
+	       COALESCE(al.LOCALES_, '') AS AVAILABLE_LOCALES_`
+
+const cliLocaleJoin = `
+		LEFT JOIN cli_locale_content l
+		  ON l.CLI_SLUG_ = c.SLUG_ AND l.LOCALE_ = ?
+		LEFT JOIN (
+			SELECT CLI_SLUG_, GROUP_CONCAT(LOCALE_ ORDER BY LOCALE_ SEPARATOR ',') AS LOCALES_
+			FROM cli_locale_content
+			GROUP BY CLI_SLUG_
+		) al ON al.CLI_SLUG_ = c.SLUG_`
 
 func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	if err := ensureDatabase(ctx, cfg); err != nil {
@@ -49,7 +87,12 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 		return nil, fmt.Errorf("ping mysql database: %w", err)
 	}
 
-	store := &Store{db: db}
+	store := &Store{
+		db:              db,
+		adminEmails:     adminEmailSet(cfg.AdminEmails),
+		releasesRoot:    strings.TrimSpace(cfg.ReleasesRoot),
+		releasesBaseURL: strings.TrimRight(strings.TrimSpace(cfg.ReleasesBaseURL), "/"),
+	}
 	if err := store.init(ctx); err != nil {
 		db.Close()
 		return nil, err
@@ -68,6 +111,9 @@ func (s *Store) init(ctx context.Context) error {
 			return fmt.Errorf("initialize mysql schema: %w", err)
 		}
 	}
+	if err := s.ensureRolesSeeded(ctx, s.db); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -75,6 +121,7 @@ func (s *Store) ListHomepageCLIs(ctx context.Context, sort string, limit int) ([
 	if limit <= 0 {
 		limit = 12
 	}
+	locale := i18n.LocaleFromContext(ctx)
 
 	total, err := s.CountHomepageCLIs(ctx)
 	if err != nil {
@@ -84,9 +131,12 @@ func (s *Store) ListHomepageCLIs(ctx context.Context, sort string, limit int) ([
 	rows, err := s.db.QueryContext(ctx,
 		fmt.Sprintf(`%s
 		FROM cli_registry c
+		%s
 		WHERE c.ENABLED_ = 1 AND c.ENVIRONMENT_KIND_ != 'WEBSITE'
+		  AND (c.OWNER_USER_ID_ IS NULL OR c.STATUS_ = 'published')
 		ORDER BY %s
-		LIMIT ?`, cliSelectList, homepageSortOrder(sort)),
+		LIMIT ?`, cliSelectList, cliLocaleJoin, homepageSortOrder(sort)),
+		locale,
 		limit,
 	)
 	if err != nil {
@@ -105,7 +155,8 @@ func (s *Store) CountHomepageCLIs(ctx context.Context) (int, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM cli_registry
-		WHERE ENABLED_ = 1 AND ENVIRONMENT_KIND_ != 'WEBSITE'`)
+		WHERE ENABLED_ = 1 AND ENVIRONMENT_KIND_ != 'WEBSITE'
+		  AND (OWNER_USER_ID_ IS NULL OR STATUS_ = 'published')`)
 	var total int
 	if err := row.Scan(&total); err != nil {
 		return 0, fmt.Errorf("count homepage clis: %w", err)
@@ -118,22 +169,41 @@ func (s *Store) SearchCLIs(ctx context.Context, query string, limit int) ([]mode
 		limit = 12
 	}
 
+	locale := i18n.LocaleFromContext(ctx)
 	pattern := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`%s
 		FROM cli_registry c
+		%s
 		WHERE c.ENABLED_ = 1
+		  AND (c.OWNER_USER_ID_ IS NULL OR c.STATUS_ = 'published')
 		  AND (
 			  LOWER(c.SLUG_) LIKE ?
 			  OR LOWER(c.DISPLAY_NAME_) LIKE ?
 			  OR LOWER(c.SUMMARY_) LIKE ?
 			  OR LOWER(c.HELP_TEXT_) LIKE ?
 			  OR LOWER(CAST(c.TAGS_JSON_ AS CHAR)) LIKE ?
+			  OR EXISTS (
+				  SELECT 1
+				  FROM cli_locale_content s
+				  WHERE s.CLI_SLUG_ = c.SLUG_
+				    AND (
+					  LOWER(COALESCE(s.DISPLAY_NAME_, '')) LIKE ?
+					  OR LOWER(COALESCE(s.SUMMARY_, '')) LIKE ?
+					  OR LOWER(COALESCE(s.HELP_TEXT_, '')) LIKE ?
+					  OR LOWER(CAST(COALESCE(s.TAGS_JSON_, JSON_ARRAY()) AS CHAR)) LIKE ?
+				    )
+			  )
 		  )
 		ORDER BY
 			CASE WHEN c.TYPE_ = 'builtin' THEN 0 ELSE 1 END,
 			c.FAVORITE_COUNT_ DESC,
 			c.DISPLAY_NAME_ ASC
-		LIMIT ?`, cliSelectList), pattern, pattern, pattern, pattern, pattern, limit)
+		LIMIT ?`, cliSelectList, cliLocaleJoin),
+		locale,
+		pattern, pattern, pattern, pattern, pattern,
+		pattern, pattern, pattern, pattern,
+		limit,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("search clis: %w", err)
 	}
@@ -143,9 +213,12 @@ func (s *Store) SearchCLIs(ctx context.Context, query string, limit int) ([]mode
 }
 
 func (s *Store) GetCLI(ctx context.Context, slug string) (models.CLI, error) {
+	locale := i18n.LocaleFromContext(ctx)
 	row := s.db.QueryRowContext(ctx, fmt.Sprintf(`%s
 		FROM cli_registry c
-		WHERE c.SLUG_ = ? AND c.ENABLED_ = 1`, cliSelectList), slug)
+		%s
+		WHERE c.SLUG_ = ? AND c.ENABLED_ = 1
+		  AND (c.OWNER_USER_ID_ IS NULL OR c.STATUS_ = 'published')`, cliSelectList, cliLocaleJoin), locale, slug)
 	return scanCLI(row)
 }
 
@@ -192,7 +265,8 @@ func (s *Store) GetCLIReleases(ctx context.Context, slug string) ([]models.CLIRe
 	}
 
 	assetRows, err := s.db.QueryContext(ctx, `
-		SELECT a.ID_, a.RELEASE_ID_, a.FILE_NAME_, a.DOWNLOAD_URL_, a.OS_, a.ARCH_, a.PACKAGE_KIND_, a.CHECKSUM_URL_, a.SIZE_BYTES_
+		SELECT a.ID_, a.RELEASE_ID_, a.FILE_NAME_, a.DOWNLOAD_URL_, a.OS_, a.ARCH_, a.PACKAGE_KIND_, a.CHECKSUM_URL_, a.SIZE_BYTES_,
+		       a.STORAGE_KIND_, a.STORAGE_PATH_
 		FROM cli_release_asset a
 		JOIN cli_release r ON r.ID_ = a.RELEASE_ID_
 		WHERE r.CLI_SLUG_ = ?
@@ -214,6 +288,8 @@ func (s *Store) GetCLIReleases(ctx context.Context, slug string) ([]models.CLIRe
 			&asset.PackageKind,
 			&asset.ChecksumURL,
 			&asset.SizeBytes,
+			&asset.StorageKind,
+			&asset.StoragePath,
 		); err != nil {
 			return nil, fmt.Errorf("scan cli release asset: %w", err)
 		}
@@ -288,8 +364,8 @@ func (s *Store) ReplaceCLIReleases(ctx context.Context, slug string, releases []
 
 		for _, asset := range release.Assets {
 			if _, execErr = tx.ExecContext(ctx, `
-				INSERT INTO cli_release_asset (RELEASE_ID_, FILE_NAME_, DOWNLOAD_URL_, OS_, ARCH_, PACKAGE_KIND_, CHECKSUM_URL_, SIZE_BYTES_, CREATED_AT_)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				INSERT INTO cli_release_asset (RELEASE_ID_, FILE_NAME_, DOWNLOAD_URL_, OS_, ARCH_, PACKAGE_KIND_, CHECKSUM_URL_, SIZE_BYTES_, STORAGE_KIND_, STORAGE_PATH_, CREATED_AT_)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				releaseID,
 				asset.FileName,
 				asset.DownloadURL,
@@ -298,6 +374,8 @@ func (s *Store) ReplaceCLIReleases(ctx context.Context, slug string, releases []
 				asset.PackageKind,
 				asset.ChecksumURL,
 				asset.SizeBytes,
+				asset.StorageKind,
+				asset.StoragePath,
 				now,
 			); execErr != nil {
 				err = fmt.Errorf("insert cli release asset %s/%s/%s: %w", slug, release.Version, asset.FileName, execErr)
@@ -363,11 +441,13 @@ func (s *Store) SetFavorite(ctx context.Context, mutation models.FavoriteMutatio
 }
 
 func (s *Store) ListFavorites(ctx context.Context, userID int64) ([]models.CLI, error) {
+	locale := i18n.LocaleFromContext(ctx)
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`%s
 		FROM user_favorite f
 		JOIN cli_registry c ON c.SLUG_ = f.CLI_SLUG_
+		%s
 		WHERE f.USER_ID_ = ?
-		ORDER BY f.CREATED_AT_ DESC`, cliSelectList), userID)
+		ORDER BY f.CREATED_AT_ DESC`, cliSelectList, cliLocaleJoin), locale, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list favorites: %w", err)
 	}
@@ -477,11 +557,16 @@ type scanner interface {
 
 func scanCLI(row scanner) (models.CLI, error) {
 	var (
-		cli        models.CLI
-		tagsRaw    []byte
-		enabled    bool
-		executable bool
-		createdAt  time.Time
+		cli                 models.CLI
+		tagsRaw             []byte
+		enabled             bool
+		executable          bool
+		createdAt           time.Time
+		updatedAt           time.Time
+		publishedAt         sql.NullTime
+		contentLocale       string
+		availableLocalesRaw string
+		ownerUserID         sql.NullInt64
 	)
 
 	if err := row.Scan(
@@ -503,11 +588,18 @@ func scanCLI(row scanner) (models.CLI, error) {
 		&cli.GiteeURL,
 		&cli.License,
 		&createdAt,
+		&updatedAt,
+		&publishedAt,
 		&cli.OriginalCommand,
 		&executable,
 		&cli.FavoriteCount,
 		&cli.CommentCount,
 		&cli.RunCount,
+		&ownerUserID,
+		&cli.Status,
+		&cli.ExecutionTemplate,
+		&contentLocale,
+		&availableLocalesRaw,
 	); err != nil {
 		return models.CLI{}, err
 	}
@@ -519,7 +611,35 @@ func scanCLI(row scanner) (models.CLI, error) {
 	cli.Enabled = enabled
 	cli.Executable = executable
 	cli.CreatedAt = createdAt.UTC()
+	cli.UpdatedAt = updatedAt.UTC()
+	if publishedAt.Valid {
+		value := publishedAt.Time.UTC()
+		cli.PublishedAt = &value
+	}
+	if ownerUserID.Valid {
+		value := ownerUserID.Int64
+		cli.OwnerUserID = &value
+	}
+	cli.ContentLocale = i18n.NormalizeLocale(contentLocale)
+	cli.AvailableLocales = normalizeAvailableLocales(availableLocalesRaw)
 	return cli, nil
+}
+
+func normalizeAvailableLocales(raw string) []string {
+	seen := map[string]struct{}{"en": {}}
+	locales := []string{"en"}
+	for _, part := range strings.Split(strings.TrimSpace(raw), ",") {
+		locale := i18n.NormalizeLocale(part)
+		if locale == "" {
+			continue
+		}
+		if _, ok := seen[locale]; ok {
+			continue
+		}
+		seen[locale] = struct{}{}
+		locales = append(locales, locale)
+	}
+	return locales
 }
 
 func scanUser(row scanner) (models.User, error) {
@@ -629,6 +749,13 @@ func nullableString(value string) any {
 		return nil
 	}
 	return value
+}
+
+func nullableInt64(value *int64) any {
+	if value == nil || *value <= 0 {
+		return nil
+	}
+	return *value
 }
 
 func homepageSortOrder(sort string) string {

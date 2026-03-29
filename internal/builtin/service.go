@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/linlay/cligrep-server/internal/data"
+	appi18n "github.com/linlay/cligrep-server/internal/i18n"
 	"github.com/linlay/cligrep-server/internal/models"
 	"github.com/linlay/cligrep-server/internal/sandbox"
 	"github.com/linlay/cligrep-server/internal/util"
@@ -27,7 +28,7 @@ func (s *Service) Execute(ctx context.Context, request models.BuiltinExecRequest
 		return models.BuiltinExecResponse{}, fmt.Errorf("multiline input is not allowed")
 	}
 	if line == "" {
-		return s.helpResponse(), nil
+		return s.helpResponse(ctx), nil
 	}
 
 	tokens, err := util.SplitLine(line)
@@ -35,21 +36,24 @@ func (s *Service) Execute(ctx context.Context, request models.BuiltinExecRequest
 		return models.BuiltinExecResponse{}, err
 	}
 	if len(tokens) == 0 {
-		return s.helpResponse(), nil
+		return s.helpResponse(ctx), nil
 	}
 
 	switch tokens[0] {
 	case "grep":
 		return s.handleGrep(ctx, tokens, request)
 	case "help":
-		return s.helpResponse(), nil
+		return s.helpResponse(ctx), nil
 	case "clear":
 		return models.BuiltinExecResponse{
 			Action:       "clear",
-			Message:      "Terminal cleared. Back to the registry homepage.",
+			Message:      appi18n.Text(ctx, "builtin_clear_done"),
 			SessionState: "home",
 			ResolvedCLI:  "builtin:clear",
-			Hints:        []string{"Use grep <query> to search.", "Press Enter on a highlighted result to open it."},
+			Hints: []string{
+				appi18n.Text(ctx, "builtin_clear_hint_search"),
+				appi18n.Text(ctx, "builtin_clear_hint_open"),
+			},
 		}, nil
 	case "create":
 		return s.handleCreate(ctx, tokens, request)
@@ -58,19 +62,19 @@ func (s *Service) Execute(ctx context.Context, request models.BuiltinExecRequest
 	default:
 		return models.BuiltinExecResponse{
 			Action:       "help",
-			Message:      fmt.Sprintf("Unknown built-in command %q.", tokens[0]),
+			Message:      appi18n.Text(ctx, "builtin_unknown_command", tokens[0]),
 			SessionState: "execution",
 			ResolvedCLI:  "builtin:error",
 			Execution: &models.ExecutionResult{
-				Stdout:       helpText(),
-				Stderr:       fmt.Sprintf("unknown built-in command: %s", tokens[0]),
+				Stdout:       helpText(ctx),
+				Stderr:       appi18n.Text(ctx, "builtin_unknown_command_stderr", tokens[0]),
 				ExitCode:     1,
 				DurationMS:   0,
 				Mode:         "builtin",
 				ResolvedCLI:  "builtin:error",
 				SessionState: "execution",
 			},
-			Hints: []string{"Available built-ins: grep, create, make, help, clear."},
+			Hints: []string{appi18n.Text(ctx, "builtin_available_hint")},
 		}, nil
 	}
 }
@@ -80,10 +84,10 @@ func (s *Service) handleGrep(ctx context.Context, tokens []string, request model
 	if query == "" {
 		return models.BuiltinExecResponse{
 			Action:       "search",
-			Message:      "grep needs a query. Example: grep ripgrep",
+			Message:      appi18n.Text(ctx, "builtin_grep_query_required"),
 			SessionState: "search-results",
 			ResolvedCLI:  "builtin:grep",
-			Hints:        []string{"Search name, tags, summaries, and stored help text."},
+			Hints:        []string{appi18n.Text(ctx, "builtin_grep_query_hint")},
 		}, nil
 	}
 
@@ -94,11 +98,14 @@ func (s *Service) handleGrep(ctx context.Context, tokens []string, request model
 
 	return models.BuiltinExecResponse{
 		Action:        "search",
-		Message:       fmt.Sprintf("Found %d CLI matches for %q.", len(results), query),
+		Message:       appi18n.Text(ctx, "builtin_grep_found", len(results), query),
 		SessionState:  "search-results",
 		ResolvedCLI:   "builtin:grep",
 		SearchResults: results,
-		Hints:         []string{"Enter on a highlighted result opens its run mode.", "Esc returns to the homepage grid."},
+		Hints: []string{
+			appi18n.Text(ctx, "builtin_grep_hint_open"),
+			appi18n.Text(ctx, "builtin_grep_hint_escape"),
+		},
 	}, nil
 }
 
@@ -106,11 +113,11 @@ func (s *Service) handleCreate(ctx context.Context, tokens []string, request mod
 	if len(tokens) < 3 || tokens[1] != "python" {
 		return models.BuiltinExecResponse{
 			Action:       "create",
-			Message:      "Usage: create python \"build a CLI that ...\"",
+			Message:      appi18n.Text(ctx, "builtin_create_usage"),
 			SessionState: "execution",
 			ResolvedCLI:  "builtin:create",
 			Execution: &models.ExecutionResult{
-				Stdout:       "Use create python \"your spec\" to generate and preview a Python CLI.",
+				Stdout:       appi18n.Text(ctx, "builtin_create_usage_stdout"),
 				ExitCode:     0,
 				Mode:         "builtin",
 				ResolvedCLI:  "builtin:create",
@@ -146,12 +153,15 @@ func (s *Service) handleCreate(ctx context.Context, tokens []string, request mod
 
 	return models.BuiltinExecResponse{
 		Action:       "create",
-		Message:      fmt.Sprintf("Generated %s from spec %q and previewed it in the Python sandbox.", scriptName, spec),
+		Message:      appi18n.Text(ctx, "builtin_create_done", scriptName, spec),
 		SessionState: "execution",
 		ResolvedCLI:  "builtin:create",
 		Execution:    &result,
 		Asset:        &asset,
-		Hints:        []string{"The generated file is saved to the database as an asset.", "Use make dockerfile <cli> for a packaging draft next."},
+		Hints: []string{
+			appi18n.Text(ctx, "builtin_create_hint_saved"),
+			appi18n.Text(ctx, "builtin_create_hint_next"),
+		},
 	}, nil
 }
 
@@ -159,11 +169,11 @@ func (s *Service) handleMake(ctx context.Context, tokens []string, request model
 	if len(tokens) < 3 {
 		return models.BuiltinExecResponse{
 			Action:       "make",
-			Message:      "Usage: make sandbox <cli> or make dockerfile <cli>",
+			Message:      appi18n.Text(ctx, "builtin_make_usage"),
 			SessionState: "execution",
 			ResolvedCLI:  "builtin:make",
 			Execution: &models.ExecutionResult{
-				Stdout:       "Examples:\nmake sandbox grep\nmake dockerfile grep",
+				Stdout:       appi18n.Text(ctx, "builtin_make_usage_stdout"),
 				ExitCode:     0,
 				Mode:         "builtin",
 				ResolvedCLI:  "builtin:make",
@@ -198,11 +208,11 @@ func (s *Service) handleMake(ctx context.Context, tokens []string, request model
 	default:
 		return models.BuiltinExecResponse{
 			Action:       "make",
-			Message:      fmt.Sprintf("Unknown make target %q.", targetType),
+			Message:      appi18n.Text(ctx, "builtin_make_unknown_target", targetType),
 			SessionState: "execution",
 			ResolvedCLI:  "builtin:make",
 			Execution: &models.ExecutionResult{
-				Stderr:       fmt.Sprintf("unknown make target: %s", targetType),
+				Stderr:       appi18n.Text(ctx, "builtin_make_unknown_target_stderr", targetType),
 				ExitCode:     1,
 				Mode:         "builtin",
 				ResolvedCLI:  "builtin:make",
@@ -229,7 +239,7 @@ func (s *Service) handleMake(ctx context.Context, tokens []string, request model
 
 	return models.BuiltinExecResponse{
 		Action:       "make",
-		Message:      fmt.Sprintf("Generated %s preview for %s.", targetType, cli.DisplayName),
+		Message:      appi18n.Text(ctx, "builtin_make_done", targetType, cli.DisplayName),
 		SessionState: "execution",
 		ResolvedCLI:  "builtin:make",
 		Asset:        &asset,
@@ -240,44 +250,50 @@ func (s *Service) handleMake(ctx context.Context, tokens []string, request model
 			ResolvedCLI:  "builtin:make",
 			SessionState: "execution",
 		},
-		Hints: []string{"Generated artifacts are previews backed by the database.", "Use Esc to return to search/home."},
+		Hints: []string{
+			appi18n.Text(ctx, "builtin_make_hint_preview"),
+			appi18n.Text(ctx, "builtin_make_hint_escape"),
+		},
 	}, nil
 }
 
-func (s *Service) helpResponse() models.BuiltinExecResponse {
+func (s *Service) helpResponse(ctx context.Context) models.BuiltinExecResponse {
 	return models.BuiltinExecResponse{
 		Action:       "help",
-		Message:      "Built-in command reference loaded.",
+		Message:      appi18n.Text(ctx, "builtin_help_loaded"),
 		SessionState: "execution",
 		ResolvedCLI:  "builtin:help",
 		Execution: &models.ExecutionResult{
-			Stdout:       helpText(),
+			Stdout:       helpText(ctx),
 			ExitCode:     0,
 			Mode:         "builtin",
 			ResolvedCLI:  "builtin:help",
 			SessionState: "execution",
 		},
-		Hints: []string{"Search mode auto-wraps plain text as grep <query>.", "Built-ins stay website-native; ordinary CLIs run in Docker sandboxes."},
+		Hints: []string{
+			appi18n.Text(ctx, "builtin_generic_hint_search_wrap"),
+			appi18n.Text(ctx, "builtin_generic_hint_runtime"),
+		},
 	}
 }
 
-func helpText() string {
+func helpText(ctx context.Context) string {
 	return strings.Join([]string{
-		"CLI Grep built-ins",
+		appi18n.Text(ctx, "builtin_help_title"),
 		"",
 		"grep <query>",
-		"  Search indexed CLIs by name, summary, tags, and stored help text.",
+		"  " + appi18n.Text(ctx, "builtin_help_grep_desc"),
 		"",
 		"create python \"<spec>\"",
-		"  Generate a single-file Python CLI scaffold and preview it with --help.",
+		"  " + appi18n.Text(ctx, "builtin_help_create_desc"),
 		"",
 		"make sandbox <cli>",
-		"  Generate a sandbox recipe preview.",
+		"  " + appi18n.Text(ctx, "builtin_help_make_sandbox_desc"),
 		"",
 		"make dockerfile <cli>",
-		"  Generate a Dockerfile preview for the selected CLI.",
+		"  " + appi18n.Text(ctx, "builtin_help_make_dockerfile_desc"),
 		"",
-		"clear / help",
+		appi18n.Text(ctx, "builtin_help_footer"),
 	}, "\n")
 }
 

@@ -25,29 +25,36 @@ const (
 )
 
 type CLI struct {
-	Slug            string          `json:"slug"`
-	DisplayName     string          `json:"displayName"`
-	Summary         string          `json:"summary"`
-	Type            CLIType         `json:"type"`
-	Tags            []string        `json:"tags"`
-	HelpText        string          `json:"helpText"`
-	VersionText     string          `json:"versionText"`
-	Popularity      int             `json:"popularity"`
-	RuntimeImage    string          `json:"runtimeImage"`
-	Enabled         bool            `json:"enabled"`
-	ExampleLine     string          `json:"exampleLine"`
-	FavoriteCount   int             `json:"favoriteCount"`
-	CommentCount    int             `json:"commentCount"`
-	RunCount        int             `json:"runCount"`
-	EnvironmentKind EnvironmentKind `json:"environmentKind"`
-	SourceType      string          `json:"sourceType"`
-	Author          string          `json:"author"`
-	GitHubURL       string          `json:"githubUrl,omitempty"`
-	GiteeURL        string          `json:"giteeUrl,omitempty"`
-	License         string          `json:"license,omitempty"`
-	CreatedAt       time.Time       `json:"createdAt"`
-	OriginalCommand string          `json:"originalCommand,omitempty"`
-	Executable      bool            `json:"executable"`
+	Slug              string          `json:"slug"`
+	DisplayName       string          `json:"displayName"`
+	Summary           string          `json:"summary"`
+	Type              CLIType         `json:"type"`
+	Tags              []string        `json:"tags"`
+	HelpText          string          `json:"helpText"`
+	VersionText       string          `json:"versionText"`
+	Popularity        int             `json:"popularity"`
+	RuntimeImage      string          `json:"runtimeImage"`
+	Enabled           bool            `json:"enabled"`
+	ExampleLine       string          `json:"exampleLine"`
+	FavoriteCount     int             `json:"favoriteCount"`
+	CommentCount      int             `json:"commentCount"`
+	RunCount          int             `json:"runCount"`
+	EnvironmentKind   EnvironmentKind `json:"environmentKind"`
+	SourceType        string          `json:"sourceType"`
+	Author            string          `json:"author"`
+	GitHubURL         string          `json:"githubUrl,omitempty"`
+	GiteeURL          string          `json:"giteeUrl,omitempty"`
+	License           string          `json:"license,omitempty"`
+	CreatedAt         time.Time       `json:"createdAt"`
+	UpdatedAt         time.Time       `json:"updatedAt"`
+	PublishedAt       *time.Time      `json:"publishedAt,omitempty"`
+	OriginalCommand   string          `json:"originalCommand,omitempty"`
+	Executable        bool            `json:"executable"`
+	ContentLocale     string          `json:"contentLocale"`
+	AvailableLocales  []string        `json:"availableLocales"`
+	OwnerUserID       *int64          `json:"ownerUserId,omitempty"`
+	Status            string          `json:"status,omitempty"`
+	ExecutionTemplate string          `json:"executionTemplate,omitempty"`
 }
 
 type CLIRelease struct {
@@ -70,6 +77,8 @@ type CLIReleaseAsset struct {
 	PackageKind string `json:"packageKind"`
 	ChecksumURL string `json:"checksumUrl"`
 	SizeBytes   int64  `json:"sizeBytes"`
+	StorageKind string `json:"storageKind,omitempty"`
+	StoragePath string `json:"storagePath,omitempty"`
 }
 
 type User struct {
@@ -81,6 +90,29 @@ type User struct {
 	AuthProvider string    `json:"authProvider"`
 	IP           string    `json:"ip"`
 	CreatedAt    time.Time `json:"createdAt"`
+	Roles        []string  `json:"roles,omitempty"`
+}
+
+type Role string
+
+const (
+	RoleMember        Role = "member"
+	RolePlatformAdmin Role = "platform_admin"
+)
+
+type CLIStatus string
+
+const (
+	CLIStatusDraft     CLIStatus = "draft"
+	CLIStatusPublished CLIStatus = "published"
+)
+
+type ExecutionTemplate struct {
+	ID              string          `json:"id"`
+	Label           string          `json:"label"`
+	Description     string          `json:"description"`
+	EnvironmentKind EnvironmentKind `json:"environmentKind"`
+	Executable      bool            `json:"executable"`
 }
 
 type Comment struct {
@@ -129,11 +161,15 @@ type ExecRequest struct {
 	Line         string `json:"line"`
 	UserID       *int64 `json:"userId,omitempty"`
 	ThemeContext string `json:"themeContext,omitempty"`
+	Locale       string `json:"locale,omitempty"`
+	Timezone     string `json:"timezone,omitempty"`
 }
 
 type BuiltinExecRequest struct {
-	Line   string `json:"line"`
-	UserID *int64 `json:"userId,omitempty"`
+	Line     string `json:"line"`
+	UserID   *int64 `json:"userId,omitempty"`
+	Locale   string `json:"locale,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
 }
 
 type LocalRegisterRequest struct {
@@ -149,6 +185,41 @@ type LocalLoginRequest struct {
 
 type UpdateProfileRequest struct {
 	DisplayName string `json:"displayName"`
+}
+
+type AdminCLIUpsertRequest struct {
+	Slug              string   `json:"slug"`
+	DisplayName       string   `json:"displayName"`
+	Summary           string   `json:"summary"`
+	HelpText          string   `json:"helpText"`
+	Tags              []string `json:"tags"`
+	VersionText       string   `json:"versionText"`
+	ExampleLine       string   `json:"exampleLine"`
+	Author            string   `json:"author"`
+	GitHubURL         string   `json:"githubUrl"`
+	GiteeURL          string   `json:"giteeUrl"`
+	License           string   `json:"license"`
+	OriginalCommand   string   `json:"originalCommand"`
+	ExecutionTemplate string   `json:"executionTemplate"`
+}
+
+type AdminReleaseUpsertRequest struct {
+	Version     string    `json:"version"`
+	PublishedAt time.Time `json:"publishedAt"`
+	IsCurrent   bool      `json:"isCurrent"`
+	SourceKind  string    `json:"sourceKind"`
+	SourceURL   string    `json:"sourceUrl"`
+}
+
+type AdminMe struct {
+	User               User                `json:"user"`
+	CanAccessAdmin     bool                `json:"canAccessAdmin"`
+	IsPlatformAdmin    bool                `json:"isPlatformAdmin"`
+	ExecutionTemplates []ExecutionTemplate `json:"executionTemplates"`
+}
+
+type AdminAssetUploadResult struct {
+	Asset CLIReleaseAsset `json:"asset"`
 }
 
 type SessionMetadata struct {
@@ -195,13 +266,22 @@ type AuthLoginLog struct {
 }
 
 var (
-	ErrUnauthorized       = errors.New("unauthorized")
-	ErrAuthNotConfigured  = errors.New("auth is not configured")
-	ErrInvalidCredentials = errors.New("invalid username or password")
-	ErrUsernameTaken      = errors.New("username is already taken")
-	ErrInvalidUsername    = errors.New("username must match [a-zA-Z0-9_.-]{3,32}")
-	ErrWeakPassword       = errors.New("password must be at least 8 characters")
-	ErrInvalidDisplayName = errors.New("display name cannot be empty")
+	ErrUnauthorized             = errors.New("unauthorized")
+	ErrAuthNotConfigured        = errors.New("auth is not configured")
+	ErrInvalidCredentials       = errors.New("invalid username or password")
+	ErrUsernameTaken            = errors.New("username is already taken")
+	ErrInvalidUsername          = errors.New("username must match [a-zA-Z0-9_.-]{3,32}")
+	ErrWeakPassword             = errors.New("password must be at least 8 characters")
+	ErrInvalidDisplayName       = errors.New("display name cannot be empty")
+	ErrForbidden                = errors.New("forbidden")
+	ErrInvalidCLISlug           = errors.New("cli slug must match [a-z0-9][a-z0-9._-]{1,127}")
+	ErrCLISlugTaken             = errors.New("cli slug is already taken")
+	ErrInvalidCLIStatus         = errors.New("cli status must be draft or published")
+	ErrInvalidVersion           = errors.New("version cannot be empty")
+	ErrInvalidReleaseTime       = errors.New("publishedAt is required")
+	ErrVersionImmutable         = errors.New("release version is immutable")
+	ErrInvalidAssetFile         = errors.New("asset file is required")
+	ErrInvalidExecutionTemplate = errors.New("invalid execution template")
 )
 
 type AuthFailureReason string
