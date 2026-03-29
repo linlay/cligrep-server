@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -139,6 +140,58 @@ func (stubApp) ListComments(ctx context.Context, cliSlug string) ([]models.Comme
 
 func (stubApp) AddComment(ctx context.Context, request models.CommentMutation) (models.Comment, error) {
 	return models.Comment{}, nil
+}
+
+func (s stubApp) AdminMe(ctx context.Context, user models.User) models.AdminMe {
+	return models.AdminMe{User: user, CanAccessAdmin: true}
+}
+
+func (s stubApp) ListAdminCLIs(ctx context.Context, user models.User) ([]models.CLI, error) {
+	return []models.CLI{}, nil
+}
+
+func (s stubApp) GetAdminCLI(ctx context.Context, user models.User, slug string) (map[string]any, error) {
+	return map[string]any{"cli": models.CLI{Slug: slug}}, nil
+}
+
+func (s stubApp) CreateAdminCLI(ctx context.Context, user models.User, request models.AdminCLIUpsertRequest) (models.CLI, error) {
+	return models.CLI{Slug: request.Slug}, nil
+}
+
+func (s stubApp) UpdateAdminCLI(ctx context.Context, user models.User, slug string, request models.AdminCLIUpsertRequest) (models.CLI, error) {
+	return models.CLI{Slug: slug}, nil
+}
+
+func (s stubApp) PublishAdminCLI(ctx context.Context, user models.User, slug string) (models.CLI, error) {
+	return models.CLI{Slug: slug, Status: string(models.CLIStatusPublished)}, nil
+}
+
+func (s stubApp) UnpublishAdminCLI(ctx context.Context, user models.User, slug string) (models.CLI, error) {
+	return models.CLI{Slug: slug, Status: string(models.CLIStatusDraft)}, nil
+}
+
+func (s stubApp) DeleteAdminCLI(ctx context.Context, user models.User, slug string) error {
+	return nil
+}
+
+func (s stubApp) CreateAdminRelease(ctx context.Context, user models.User, slug string, request models.AdminReleaseUpsertRequest) (models.CLIRelease, error) {
+	return models.CLIRelease{Version: request.Version}, nil
+}
+
+func (s stubApp) UpdateAdminRelease(ctx context.Context, user models.User, slug, version string, request models.AdminReleaseUpsertRequest) (models.CLIRelease, error) {
+	return models.CLIRelease{Version: version}, nil
+}
+
+func (s stubApp) DeleteAdminRelease(ctx context.Context, user models.User, slug, version string) error {
+	return nil
+}
+
+func (s stubApp) UploadAdminReleaseAsset(ctx context.Context, user models.User, slug, version string, metadata models.CLIReleaseAsset, reader io.Reader) (models.CLIReleaseAsset, error) {
+	return metadata, nil
+}
+
+func (s stubApp) DeleteAdminReleaseAsset(ctx context.Context, user models.User, slug, version string, assetID int64) error {
+	return nil
 }
 
 func testConfig() config.Config {

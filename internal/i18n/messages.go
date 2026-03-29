@@ -31,6 +31,15 @@ var catalogs = map[string]map[string]string{
 		"invalid_username":                   "username must match [a-zA-Z0-9_.-]{3,32}",
 		"weak_password":                      "password must be at least 8 characters",
 		"invalid_display_name":               "display name cannot be empty",
+		"forbidden":                          "forbidden",
+		"invalid_cli_slug":                   "cli slug must match [a-z0-9][a-z0-9._-]{1,127}",
+		"cli_slug_taken":                     "cli slug is already taken",
+		"invalid_cli_status":                 "cli status must be draft or published",
+		"invalid_version":                    "version cannot be empty",
+		"invalid_release_time":               "publishedAt is required",
+		"version_immutable":                  "release version is immutable",
+		"invalid_asset_file":                 "asset file is required",
+		"invalid_execution_template":         "invalid execution template",
 		"builtin_help_loaded":                "Built-in command reference loaded.",
 		"builtin_clear_done":                 "Terminal cleared. Back to the registry homepage.",
 		"builtin_unknown_command":            "Unknown built-in command %q.",
@@ -84,6 +93,15 @@ var catalogs = map[string]map[string]string{
 		"invalid_username":                   "用户名必须匹配 [a-zA-Z0-9_.-]{3,32}",
 		"weak_password":                      "密码至少需要 8 个字符",
 		"invalid_display_name":               "显示名称不能为空",
+		"forbidden":                          "没有权限",
+		"invalid_cli_slug":                   "CLI slug 必须匹配 [a-z0-9][a-z0-9._-]{1,127}",
+		"cli_slug_taken":                     "CLI slug 已被占用",
+		"invalid_cli_status":                 "CLI 状态必须是 draft 或 published",
+		"invalid_version":                    "版本号不能为空",
+		"invalid_release_time":               "必须提供发布时间 publishedAt",
+		"version_immutable":                  "版本号不可修改",
+		"invalid_asset_file":                 "必须上传资产文件",
+		"invalid_execution_template":         "执行模板无效",
 		"builtin_help_loaded":                "已加载内置命令说明。",
 		"builtin_clear_done":                 "终端已清空，已返回目录首页。",
 		"builtin_unknown_command":            "未知的内置命令 %q。",
@@ -159,6 +177,24 @@ func LocalizeError(ctx context.Context, err error) string {
 		return Text(ctx, "weak_password")
 	case errors.Is(err, models.ErrInvalidDisplayName):
 		return Text(ctx, "invalid_display_name")
+	case errors.Is(err, models.ErrForbidden):
+		return Text(ctx, "forbidden")
+	case errors.Is(err, models.ErrInvalidCLISlug):
+		return Text(ctx, "invalid_cli_slug")
+	case errors.Is(err, models.ErrCLISlugTaken):
+		return Text(ctx, "cli_slug_taken")
+	case errors.Is(err, models.ErrInvalidCLIStatus):
+		return Text(ctx, "invalid_cli_status")
+	case errors.Is(err, models.ErrInvalidVersion):
+		return Text(ctx, "invalid_version")
+	case errors.Is(err, models.ErrInvalidReleaseTime):
+		return Text(ctx, "invalid_release_time")
+	case errors.Is(err, models.ErrVersionImmutable):
+		return Text(ctx, "version_immutable")
+	case errors.Is(err, models.ErrInvalidAssetFile):
+		return Text(ctx, "invalid_asset_file")
+	case errors.Is(err, models.ErrInvalidExecutionTemplate):
+		return Text(ctx, "invalid_execution_template")
 	}
 
 	switch strings.TrimSpace(err.Error()) {

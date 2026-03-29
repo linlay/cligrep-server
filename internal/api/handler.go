@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -54,6 +55,19 @@ type application interface {
 	SetFavorite(ctx context.Context, request models.FavoriteMutation) error
 	ListComments(ctx context.Context, cliSlug string) ([]models.Comment, error)
 	AddComment(ctx context.Context, request models.CommentMutation) (models.Comment, error)
+	AdminMe(ctx context.Context, user models.User) models.AdminMe
+	ListAdminCLIs(ctx context.Context, user models.User) ([]models.CLI, error)
+	GetAdminCLI(ctx context.Context, user models.User, slug string) (map[string]any, error)
+	CreateAdminCLI(ctx context.Context, user models.User, request models.AdminCLIUpsertRequest) (models.CLI, error)
+	UpdateAdminCLI(ctx context.Context, user models.User, slug string, request models.AdminCLIUpsertRequest) (models.CLI, error)
+	PublishAdminCLI(ctx context.Context, user models.User, slug string) (models.CLI, error)
+	UnpublishAdminCLI(ctx context.Context, user models.User, slug string) (models.CLI, error)
+	DeleteAdminCLI(ctx context.Context, user models.User, slug string) error
+	CreateAdminRelease(ctx context.Context, user models.User, slug string, request models.AdminReleaseUpsertRequest) (models.CLIRelease, error)
+	UpdateAdminRelease(ctx context.Context, user models.User, slug, version string, request models.AdminReleaseUpsertRequest) (models.CLIRelease, error)
+	DeleteAdminRelease(ctx context.Context, user models.User, slug, version string) error
+	UploadAdminReleaseAsset(ctx context.Context, user models.User, slug, version string, metadata models.CLIReleaseAsset, reader io.Reader) (models.CLIReleaseAsset, error)
+	DeleteAdminReleaseAsset(ctx context.Context, user models.User, slug, version string, assetID int64) error
 }
 
 func NewHandler(application application, cfg config.Config) http.Handler {
@@ -89,6 +103,9 @@ func (h *Handler) routes() {
 	h.mux.HandleFunc("/api/v1/auth/logout", h.handleLogout)
 	h.mux.HandleFunc("/api/v1/favorites", h.handleFavorites)
 	h.mux.HandleFunc("/api/v1/comments", h.handleComments)
+	h.mux.HandleFunc("/api/v1/admin/me", h.handleAdminMe)
+	h.mux.HandleFunc("/api/v1/admin/clis", h.handleAdminCLIs)
+	h.mux.HandleFunc("/api/v1/admin/clis/", h.handleAdminCLIBySlug)
 }
 
 func (h *Handler) withMiddleware(next http.Handler) http.Handler {
@@ -99,7 +116,7 @@ func (h *Handler) withMiddleware(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		}
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-CLIGREP-Locale, X-CLIGREP-Timezone")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

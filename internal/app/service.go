@@ -184,6 +184,14 @@ func (a *App) ExecuteCLI(ctx context.Context, request models.ExecRequest) (model
 	if cli.Type == models.CLITypeBuiltin {
 		return models.ExecutionResult{}, errors.New("builtin commands must use /api/v1/builtin/exec")
 	}
+	if cli.OwnerUserID != nil {
+		if cli.Status != string(models.CLIStatusPublished) {
+			return models.ExecutionResult{}, models.ErrForbidden
+		}
+		if cli.ExecutionTemplate != "busybox-applet" {
+			return models.ExecutionResult{}, errors.New("this CLI is indexed for reference only and cannot be executed in the sandbox")
+		}
+	}
 	if !cli.Executable || cli.EnvironmentKind != models.EnvironmentKindSandbox {
 		return models.ExecutionResult{}, errors.New("this CLI is indexed for reference only and cannot be executed in the sandbox")
 	}

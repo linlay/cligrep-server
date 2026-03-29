@@ -21,6 +21,7 @@ func TestLoadAuthDefaultsAndOverrides(t *testing.T) {
 	t.Setenv("CLIGREP_AUTH_COOKIE_SAMESITE", "Strict")
 	t.Setenv("CLIGREP_RELEASES_ROOT", "/srv/releases")
 	t.Setenv("CLIGREP_RELEASES_BASE_URL", "https://downloads.example.com/cli-releases")
+	t.Setenv("CLIGREP_ADMIN_EMAILS", "linlay@gmail.com,ops@example.com")
 
 	cfg := Load()
 
@@ -60,6 +61,9 @@ func TestLoadAuthDefaultsAndOverrides(t *testing.T) {
 	if cfg.ReleasesBaseURL != "https://downloads.example.com/cli-releases" {
 		t.Fatalf("unexpected releases base url %q", cfg.ReleasesBaseURL)
 	}
+	if len(cfg.AdminEmails) != 2 || cfg.AdminEmails[0] != "linlay@gmail.com" || cfg.AdminEmails[1] != "ops@example.com" {
+		t.Fatalf("unexpected admin emails %#v", cfg.AdminEmails)
+	}
 }
 
 func TestLoadAuthDefaults(t *testing.T) {
@@ -81,6 +85,7 @@ func TestLoadAuthDefaults(t *testing.T) {
 		"CLIGREP_AUTH_COOKIE_SAMESITE",
 		"CLIGREP_RELEASES_ROOT",
 		"CLIGREP_RELEASES_BASE_URL",
+		"CLIGREP_ADMIN_EMAILS",
 	} {
 		if err := os.Unsetenv(key); err != nil {
 			t.Fatalf("unset %s: %v", key, err)
@@ -118,6 +123,9 @@ func TestLoadAuthDefaults(t *testing.T) {
 	}
 	if cfg.ReleasesBaseURL != "https://cligrep.com/cli-releases" {
 		t.Fatalf("unexpected default releases base url %q", cfg.ReleasesBaseURL)
+	}
+	if len(cfg.AdminEmails) != 1 || cfg.AdminEmails[0] != "linlay@gmail.com" {
+		t.Fatalf("unexpected default admin emails %#v", cfg.AdminEmails)
 	}
 }
 

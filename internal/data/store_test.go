@@ -72,6 +72,10 @@ func TestMySQLSchemaStatementsUseUppercaseTrailingUnderscoreColumns(t *testing.T
 		"AUTH_SUB_ VARCHAR(255)",
 		"CREATE TABLE IF NOT EXISTS auth_local_credential",
 		"PASSWORD_HASH_ VARCHAR(255)",
+		"CREATE TABLE IF NOT EXISTS auth_role",
+		"ROLE_KEY_ VARCHAR(64)",
+		"CREATE TABLE IF NOT EXISTS auth_user_role",
+		"ROLE_ID_ BIGINT UNSIGNED",
 		"CREATE TABLE IF NOT EXISTS auth_session",
 		"TOKEN_HASH_ CHAR(64)",
 		"EXPIRES_AT_ DATETIME(3)",
@@ -95,6 +99,10 @@ func TestMySQLSchemaStatementsUseUppercaseTrailingUnderscoreColumns(t *testing.T
 		"CREATE TABLE IF NOT EXISTS cli_release_asset",
 		"DOWNLOAD_URL_ VARCHAR(1024)",
 		"CHECKSUM_URL_ VARCHAR(1024)",
+		"OWNER_USER_ID_ BIGINT UNSIGNED",
+		"STATUS_ VARCHAR(32) NOT NULL DEFAULT 'published'",
+		"EXECUTION_TEMPLATE_ VARCHAR(64) NOT NULL DEFAULT ''",
+		"STORAGE_PATH_ VARCHAR(1024)",
 	}
 
 	joined := strings.Join(statements, "\n")
