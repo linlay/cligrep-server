@@ -317,7 +317,7 @@ func (a *App) buildAdminCLI(user models.User, current models.CLI, request models
 	next.VersionText = firstNonEmptyString(request.VersionText, current.VersionText, "N/A")
 	next.ExampleLine = firstNonEmptyString(request.ExampleLine, current.ExampleLine, fmt.Sprintf("%s --help", slug))
 	next.Author = firstNonEmptyString(request.Author, current.Author, user.DisplayName, user.Username)
-	next.GitHubURL = strings.TrimSpace(request.GitHubURL)
+	next.OfficialURL = strings.TrimSpace(request.OfficialURL)
 	next.GiteeURL = strings.TrimSpace(request.GiteeURL)
 	next.License = strings.TrimSpace(request.License)
 	next.OriginalCommand = firstNonEmptyString(request.OriginalCommand, current.OriginalCommand, slug)

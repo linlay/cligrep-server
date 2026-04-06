@@ -42,7 +42,7 @@ type CLI struct {
 	EnvironmentKind   EnvironmentKind `json:"environmentKind"`
 	SourceType        string          `json:"sourceType"`
 	Author            string          `json:"author"`
-	GitHubURL         string          `json:"githubUrl,omitempty"`
+	OfficialURL       string          `json:"officialUrl,omitempty"`
 	GiteeURL          string          `json:"giteeUrl,omitempty"`
 	License           string          `json:"license,omitempty"`
 	CreatedAt         time.Time       `json:"createdAt"`
@@ -196,7 +196,7 @@ type AdminCLIUpsertRequest struct {
 	VersionText       string   `json:"versionText"`
 	ExampleLine       string   `json:"exampleLine"`
 	Author            string   `json:"author"`
-	GitHubURL         string   `json:"githubUrl"`
+	OfficialURL       string   `json:"officialUrl"`
 	GiteeURL          string   `json:"giteeUrl"`
 	License           string   `json:"license"`
 	OriginalCommand   string   `json:"originalCommand"`

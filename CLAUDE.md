@@ -87,6 +87,7 @@
 - 通过 `mysql` CLI 手工导入 SQL 时，必须显式带 `--default-character-set=utf8mb4`，否则中文 locale seed 可能被写成乱码。
 - 现有环境升级到本次版本时，需要先执行 `migrate-20260327-cleanup.sql`，再部署新代码。
 - locale 表接入版本还需要执行 `migrate-20260328-cli-locales.sql`，并重新导入 `seed-cli-locales.sql`。
+- 官方地址字段改名版本还需要执行 `migrate-20260330-official-url.sql`，将 `GITHUB_URL_` 迁移为 `OFFICIAL_URL_`。
 - `release-sync` 只同步 release 元数据，不再负责导入 CLI catalog。
 - `scripts/import-upstream-clis.sh` 会抓取外部上游 CLI 版本、同步到远端 release 目录，先执行 `go run ./cmd/seed-catalog`，再在本地 staging 目录上执行 `release-sync`。
 - `cli_registry` 的收藏、评论、运行计数在写路径同步维护，首页/详情/搜索直接读取计数列。
@@ -103,6 +104,7 @@
 - 现有数据库升级：
   - `mysql -u <db-user> -p < scripts/mysql/migrate-20260327-cleanup.sql`
   - `mysql --default-character-set=utf8mb4 -u <db-user> -p < scripts/mysql/migrate-20260328-cli-locales.sql`
+  - `mysql --default-character-set=utf8mb4 -u <db-user> -p < scripts/mysql/migrate-20260330-official-url.sql`
   - `mysql --default-character-set=utf8mb4 -u <db-user> -p < scripts/mysql/seed-cli-locales.sql`
 - 执行测试：`go test ./...`
 - 构建二进制：`./build.sh`

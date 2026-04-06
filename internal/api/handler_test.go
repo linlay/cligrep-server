@@ -17,6 +17,7 @@ import (
 
 type stubApp struct {
 	health                   map[string]any
+	cliPayload               map[string]any
 	sessionUser              models.User
 	sessionErr               error
 	googleAuthURL            string
@@ -46,7 +47,10 @@ func (stubApp) Search(ctx context.Context, query string) (map[string]any, error)
 	return map[string]any{"items": []any{}, "total": 0, "query": query}, nil
 }
 
-func (stubApp) GetCLI(ctx context.Context, slug string) (map[string]any, error) {
+func (s stubApp) GetCLI(ctx context.Context, slug string) (map[string]any, error) {
+	if s.cliPayload != nil {
+		return s.cliPayload, nil
+	}
 	return nil, nil
 }
 
@@ -315,6 +319,35 @@ func TestHandleMeReturnsSessionUser(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestHandleCLIReturnsOfficialURLField(t *testing.T) {
+	handler := NewHandler(&stubApp{
+		cliPayload: map[string]any{
+			"cli": models.CLI{
+				Slug:        "jq",
+				DisplayName: "jq",
+				OfficialURL: "https://github.com/jqlang/jq",
+			},
+		},
+	}, testConfig())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/clis/jq", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "\"officialUrl\":\"https://github.com/jqlang/jq\"") {
+		t.Fatalf("expected officialUrl in response, got %s", body)
+	}
+	if strings.Contains(body, "\"githubUrl\"") {
+		t.Fatalf("expected githubUrl to be absent, got %s", body)
 	}
 }
 

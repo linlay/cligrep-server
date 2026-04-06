@@ -75,12 +75,14 @@ go run ./cmd/seed-catalog
 ```bash
 mysql -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/migrate-20260327-cleanup.sql
 mysql --default-character-set=utf8mb4 -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/migrate-20260328-cli-locales.sql
+mysql --default-character-set=utf8mb4 -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/migrate-20260330-official-url.sql
 mysql --default-character-set=utf8mb4 -h <db-host> -P <db-port> -u <db-user> -p < scripts/mysql/seed-cli-locales.sql
 ```
 
 说明：
 - `migrate-20260327-cleanup.sql` 会补 `cli_registry` 计数列、回填收藏/评论/运行计数，并删除 `seed_execution_record`。
 - `migrate-20260328-cli-locales.sql` 会创建 `cli_locale_content`。
+- `migrate-20260330-official-url.sql` 会把 `cli_registry` 的官方地址列从 `GITHUB_URL_` 迁移为 `OFFICIAL_URL_`，并回填旧数据。
 - `seed-cli-locales.sql` 会回灌 locale 文案；如果先前通过未指定 `utf8mb4` 的 `mysql` CLI 导入过中文数据，也应按上面的方式重新执行一次覆盖修复。
 
 ### release 数据同步
