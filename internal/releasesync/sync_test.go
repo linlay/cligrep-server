@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -26,26 +27,26 @@ func TestSyncImportsWebsiteReleaseDirectories(t *testing.T) {
 	root := t.TempDir()
 	baseURL := "https://cligrep.com/cli-releases"
 
-	writeReleaseFile(t, root, "dbx", "v0.1.0", "dbx_v0.1.0_darwin_arm64.tar.gz", 128, time.Date(2026, 3, 25, 12, 0, 0, 0, time.UTC))
-	writeReleaseFile(t, root, "dbx", "v0.1.0", "dbx_v0.1.0_linux_amd64.tar.gz", 256, time.Date(2026, 3, 25, 12, 0, 0, 0, time.UTC))
-	writeReleaseFile(t, root, "dbx", "v0.1.0", "dbx_v0.1.0_checksums.txt", 32, time.Date(2026, 3, 25, 12, 5, 0, 0, time.UTC))
-	writeLatestSymlink(t, root, "dbx", "dbx_darwin_arm64.tar.gz", "../v0.1.0/dbx_v0.1.0_darwin_arm64.tar.gz")
-	writeLatestSymlink(t, root, "dbx", "dbx_linux_amd64.tar.gz", "../v0.1.0/dbx_v0.1.0_linux_amd64.tar.gz")
-	writeLatestSymlink(t, root, "dbx", "checksums.txt", "../v0.1.0/dbx_v0.1.0_checksums.txt")
+	writeReleaseFile(t, root, "sampledb", "v0.1.0", "sampledb_v0.1.0_darwin_arm64.tar.gz", 128, time.Date(2026, 3, 25, 12, 0, 0, 0, time.UTC))
+	writeReleaseFile(t, root, "sampledb", "v0.1.0", "sampledb_v0.1.0_linux_amd64.tar.gz", 256, time.Date(2026, 3, 25, 12, 0, 0, 0, time.UTC))
+	writeReleaseFile(t, root, "sampledb", "v0.1.0", "sampledb_v0.1.0_checksums.txt", 32, time.Date(2026, 3, 25, 12, 5, 0, 0, time.UTC))
+	writeLatestSymlink(t, root, "sampledb", "sampledb_darwin_arm64.tar.gz", "../v0.1.0/sampledb_v0.1.0_darwin_arm64.tar.gz")
+	writeLatestSymlink(t, root, "sampledb", "sampledb_linux_amd64.tar.gz", "../v0.1.0/sampledb_v0.1.0_linux_amd64.tar.gz")
+	writeLatestSymlink(t, root, "sampledb", "checksums.txt", "../v0.1.0/sampledb_v0.1.0_checksums.txt")
 
-	writeReleaseFile(t, root, "himalaya", "v1.1.0", "himalaya.x86_64-linux.tgz", 512, time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC))
-	writeReleaseFile(t, root, "himalaya", "v1.1.0", "himalaya_v1.1.0_checksums.txt", 64, time.Date(2026, 2, 10, 9, 5, 0, 0, time.UTC))
-	writeReleaseFile(t, root, "himalaya", "v1.2.0", "himalaya.x86_64-linux.tgz", 768, time.Date(2026, 2, 19, 10, 14, 0, 0, time.UTC))
-	writeReleaseFile(t, root, "himalaya", "v1.2.0", "himalaya.aarch64-linux.tgz", 769, time.Date(2026, 2, 19, 10, 14, 0, 0, time.UTC))
-	writeReleaseFile(t, root, "himalaya", "v1.2.0", "himalaya_v1.2.0_checksums.txt", 65, time.Date(2026, 2, 19, 10, 20, 0, 0, time.UTC))
-	writeLatestSymlink(t, root, "himalaya", "himalaya_linux_amd64.tgz", "../v1.2.0/himalaya.x86_64-linux.tgz")
-	writeLatestSymlink(t, root, "himalaya", "himalaya_linux_arm64.tgz", "../v1.2.0/himalaya.aarch64-linux.tgz")
-	writeLatestSymlink(t, root, "himalaya", "checksums.txt", "../v1.2.0/himalaya_v1.2.0_checksums.txt")
+	writeReleaseFile(t, root, "mailtool", "v1.1.0", "mailtool.x86_64-linux.tgz", 512, time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC))
+	writeReleaseFile(t, root, "mailtool", "v1.1.0", "mailtool_v1.1.0_checksums.txt", 64, time.Date(2026, 2, 10, 9, 5, 0, 0, time.UTC))
+	writeReleaseFile(t, root, "mailtool", "v1.2.0", "mailtool.x86_64-linux.tgz", 768, time.Date(2026, 2, 19, 10, 14, 0, 0, time.UTC))
+	writeReleaseFile(t, root, "mailtool", "v1.2.0", "mailtool.aarch64-linux.tgz", 769, time.Date(2026, 2, 19, 10, 14, 0, 0, time.UTC))
+	writeReleaseFile(t, root, "mailtool", "v1.2.0", "mailtool_v1.2.0_checksums.txt", 65, time.Date(2026, 2, 19, 10, 20, 0, 0, time.UTC))
+	writeLatestSymlink(t, root, "mailtool", "mailtool_linux_amd64.tgz", "../v1.2.0/mailtool.x86_64-linux.tgz")
+	writeLatestSymlink(t, root, "mailtool", "mailtool_linux_arm64.tgz", "../v1.2.0/mailtool.aarch64-linux.tgz")
+	writeLatestSymlink(t, root, "mailtool", "checksums.txt", "../v1.2.0/mailtool_v1.2.0_checksums.txt")
 
 	store := &fakeStore{}
 	syncer := New(root, baseURL, store)
 
-	results, err := syncer.Sync(context.Background(), []string{"dbx", "himalaya"})
+	results, err := syncer.Sync(context.Background(), []string{"sampledb", "mailtool"})
 	if err != nil {
 		t.Fatalf("sync releases: %v", err)
 	}
@@ -53,43 +54,43 @@ func TestSyncImportsWebsiteReleaseDirectories(t *testing.T) {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
 
-	dbxReleases := store.bySlug["dbx"]
-	if len(dbxReleases) != 1 {
-		t.Fatalf("expected 1 dbx release, got %d", len(dbxReleases))
+	sampledbReleases := store.bySlug["sampledb"]
+	if len(sampledbReleases) != 1 {
+		t.Fatalf("expected 1 sampledb release, got %d", len(sampledbReleases))
 	}
-	if !dbxReleases[0].IsCurrent || dbxReleases[0].Version != "v0.1.0" {
-		t.Fatalf("unexpected current dbx release: %+v", dbxReleases[0])
+	if !sampledbReleases[0].IsCurrent || sampledbReleases[0].Version != "v0.1.0" {
+		t.Fatalf("unexpected current sampledb release: %+v", sampledbReleases[0])
 	}
-	if len(dbxReleases[0].Assets) != 2 {
-		t.Fatalf("expected 2 dbx assets, got %d", len(dbxReleases[0].Assets))
+	if len(sampledbReleases[0].Assets) != 2 {
+		t.Fatalf("expected 2 sampledb assets, got %d", len(sampledbReleases[0].Assets))
 	}
-	if dbxReleases[0].Assets[0].ChecksumURL != baseURL+"/dbx/v0.1.0/dbx_v0.1.0_checksums.txt" {
-		t.Fatalf("unexpected dbx checksum url %q", dbxReleases[0].Assets[0].ChecksumURL)
+	if sampledbReleases[0].Assets[0].ChecksumURL != baseURL+"/sampledb/v0.1.0/sampledb_v0.1.0_checksums.txt" {
+		t.Fatalf("unexpected sampledb checksum url %q", sampledbReleases[0].Assets[0].ChecksumURL)
 	}
 
-	himalayaReleases := store.bySlug["himalaya"]
-	if len(himalayaReleases) != 2 {
-		t.Fatalf("expected 2 himalaya releases, got %d", len(himalayaReleases))
+	mailtoolReleases := store.bySlug["mailtool"]
+	if len(mailtoolReleases) != 2 {
+		t.Fatalf("expected 2 mailtool releases, got %d", len(mailtoolReleases))
 	}
-	if himalayaReleases[0].Version != "v1.2.0" || !himalayaReleases[0].IsCurrent {
-		t.Fatalf("expected v1.2.0 current release first, got %+v", himalayaReleases[0])
+	if mailtoolReleases[0].Version != "v1.2.0" || !mailtoolReleases[0].IsCurrent {
+		t.Fatalf("expected v1.2.0 current release first, got %+v", mailtoolReleases[0])
 	}
-	if himalayaReleases[0].Assets[0].OS != "linux" || himalayaReleases[0].Assets[0].Arch == "unknown" {
-		t.Fatalf("expected classified himalaya asset, got %+v", himalayaReleases[0].Assets[0])
+	if mailtoolReleases[0].Assets[0].OS != "linux" || mailtoolReleases[0].Assets[0].Arch == "unknown" {
+		t.Fatalf("expected classified mailtool asset, got %+v", mailtoolReleases[0].Assets[0])
 	}
 }
 
 func TestSyncRejectsMixedLatestTargets(t *testing.T) {
 	root := t.TempDir()
-	writeReleaseFile(t, root, "httpx", "v0.1.0", "httpx_v0.1.0_linux_amd64.tar.gz", 128, time.Now().UTC())
-	writeReleaseFile(t, root, "httpx", "v0.1.0", "httpx_v0.1.0_checksums.txt", 32, time.Now().UTC())
-	writeReleaseFile(t, root, "httpx", "v0.2.0", "httpx_v0.2.0_linux_amd64.tar.gz", 128, time.Now().UTC())
-	writeReleaseFile(t, root, "httpx", "v0.2.0", "httpx_v0.2.0_checksums.txt", 32, time.Now().UTC())
-	writeLatestSymlink(t, root, "httpx", "httpx_linux_amd64.tar.gz", "../v0.1.0/httpx_v0.1.0_linux_amd64.tar.gz")
-	writeLatestSymlink(t, root, "httpx", "checksums.txt", "../v0.2.0/httpx_v0.2.0_checksums.txt")
+	writeReleaseFile(t, root, "requester", "v0.1.0", "requester_v0.1.0_linux_amd64.tar.gz", 128, time.Now().UTC())
+	writeReleaseFile(t, root, "requester", "v0.1.0", "requester_v0.1.0_checksums.txt", 32, time.Now().UTC())
+	writeReleaseFile(t, root, "requester", "v0.2.0", "requester_v0.2.0_linux_amd64.tar.gz", 128, time.Now().UTC())
+	writeReleaseFile(t, root, "requester", "v0.2.0", "requester_v0.2.0_checksums.txt", 32, time.Now().UTC())
+	writeLatestSymlink(t, root, "requester", "requester_linux_amd64.tar.gz", "../v0.1.0/requester_v0.1.0_linux_amd64.tar.gz")
+	writeLatestSymlink(t, root, "requester", "checksums.txt", "../v0.2.0/requester_v0.2.0_checksums.txt")
 
 	syncer := New(root, "https://cligrep.com/cli-releases", &fakeStore{})
-	if _, err := syncer.Sync(context.Background(), []string{"httpx"}); err == nil {
+	if _, err := syncer.Sync(context.Background(), []string{"requester"}); err == nil {
 		t.Fatal("expected mixed latest targets to fail")
 	}
 }
@@ -98,44 +99,65 @@ func TestSyncSupportsTarXZAndUnknownPlatformAssets(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 3, 27, 13, 0, 0, 0, time.UTC)
 
-	writeReleaseFile(t, root, "ffmpeg", "v7.1.0", "ffmpeg-7.1.0.tar.xz", 1024, now)
-	writeReleaseFile(t, root, "ffmpeg", "v7.1.0", "ffmpeg_v7.1.0_checksums.txt", 64, now)
-	writeLatestSymlink(t, root, "ffmpeg", "ffmpeg.tar.xz", "../v7.1.0/ffmpeg-7.1.0.tar.xz")
-	writeLatestSymlink(t, root, "ffmpeg", "checksums.txt", "../v7.1.0/ffmpeg_v7.1.0_checksums.txt")
+	writeReleaseFile(t, root, "mediakit", "v7.1.0", "mediakit-7.1.0.tar.xz", 1024, now)
+	writeReleaseFile(t, root, "mediakit", "v7.1.0", "mediakit_v7.1.0_checksums.txt", 64, now)
+	writeLatestSymlink(t, root, "mediakit", "mediakit.tar.xz", "../v7.1.0/mediakit-7.1.0.tar.xz")
+	writeLatestSymlink(t, root, "mediakit", "checksums.txt", "../v7.1.0/mediakit_v7.1.0_checksums.txt")
 
-	writeReleaseFile(t, root, "notebooklm", "v0.3.0", "notebooklm_py-0.3.0-py3-none-any.whl", 2048, now)
-	writeReleaseFile(t, root, "notebooklm", "v0.3.0", "notebooklm-py-0.3.0.tar.gz", 4096, now)
-	writeReleaseFile(t, root, "notebooklm", "v0.3.0", "notebooklm_v0.3.0_checksums.txt", 64, now)
-	writeLatestSymlink(t, root, "notebooklm", "notebooklm.whl", "../v0.3.0/notebooklm_py-0.3.0-py3-none-any.whl")
-	writeLatestSymlink(t, root, "notebooklm", "notebooklm.tar.gz", "../v0.3.0/notebooklm-py-0.3.0.tar.gz")
-	writeLatestSymlink(t, root, "notebooklm", "checksums.txt", "../v0.3.0/notebooklm_v0.3.0_checksums.txt")
+	writeReleaseFile(t, root, "noteskit", "v0.3.0", "noteskit_py-0.3.0-py3-none-any.whl", 2048, now)
+	writeReleaseFile(t, root, "noteskit", "v0.3.0", "noteskit-0.3.0.tar.gz", 4096, now)
+	writeReleaseFile(t, root, "noteskit", "v0.3.0", "noteskit_v0.3.0_checksums.txt", 64, now)
+	writeLatestSymlink(t, root, "noteskit", "noteskit.whl", "../v0.3.0/noteskit_py-0.3.0-py3-none-any.whl")
+	writeLatestSymlink(t, root, "noteskit", "noteskit.tar.gz", "../v0.3.0/noteskit-0.3.0.tar.gz")
+	writeLatestSymlink(t, root, "noteskit", "checksums.txt", "../v0.3.0/noteskit_v0.3.0_checksums.txt")
 
 	store := &fakeStore{}
 	syncer := New(root, "https://cligrep.com/cli-releases", store)
 
-	if _, err := syncer.Sync(context.Background(), []string{"ffmpeg", "notebooklm"}); err != nil {
+	if _, err := syncer.Sync(context.Background(), []string{"mediakit", "noteskit"}); err != nil {
 		t.Fatalf("sync releases: %v", err)
 	}
 
-	ffmpegReleases := store.bySlug["ffmpeg"]
-	if len(ffmpegReleases) != 1 {
-		t.Fatalf("expected 1 ffmpeg release, got %d", len(ffmpegReleases))
+	mediakitReleases := store.bySlug["mediakit"]
+	if len(mediakitReleases) != 1 {
+		t.Fatalf("expected 1 mediakit release, got %d", len(mediakitReleases))
 	}
-	if got := ffmpegReleases[0].Assets[0].PackageKind; got != "tar.xz" {
+	if got := mediakitReleases[0].Assets[0].PackageKind; got != "tar.xz" {
 		t.Fatalf("expected tar.xz package kind, got %q", got)
 	}
 
-	notebooklmReleases := store.bySlug["notebooklm"]
-	if len(notebooklmReleases) != 1 {
-		t.Fatalf("expected 1 notebooklm release, got %d", len(notebooklmReleases))
+	noteskitReleases := store.bySlug["noteskit"]
+	if len(noteskitReleases) != 1 {
+		t.Fatalf("expected 1 noteskit release, got %d", len(noteskitReleases))
 	}
-	if len(notebooklmReleases[0].Assets) != 2 {
-		t.Fatalf("expected 2 notebooklm assets, got %d", len(notebooklmReleases[0].Assets))
+	if len(noteskitReleases[0].Assets) != 2 {
+		t.Fatalf("expected 2 noteskit assets, got %d", len(noteskitReleases[0].Assets))
 	}
-	for _, asset := range notebooklmReleases[0].Assets {
+	for _, asset := range noteskitReleases[0].Assets {
 		if asset.OS != "unknown" || asset.Arch != "unknown" {
 			t.Fatalf("expected unknown platform for %s, got os=%q arch=%q", asset.FileName, asset.OS, asset.Arch)
 		}
+	}
+}
+
+func TestDiscoverSlugsIgnoresFilesAndSortsDirectories(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"noteskit", "sampledb", "mailtool"} {
+		if err := os.Mkdir(filepath.Join(root, name), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "manifest.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	slugs, err := DiscoverSlugs(root)
+	if err != nil {
+		t.Fatalf("discover slugs: %v", err)
+	}
+	want := []string{"mailtool", "noteskit", "sampledb"}
+	if !slices.Equal(slugs, want) {
+		t.Fatalf("expected slugs %v, got %v", want, slugs)
 	}
 }
 
