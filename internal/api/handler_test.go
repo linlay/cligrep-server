@@ -150,6 +150,18 @@ func (s stubApp) AdminMe(ctx context.Context, user models.User) models.AdminMe {
 	return models.AdminMe{User: user, CanAccessAdmin: true}
 }
 
+func (s stubApp) ListAdminUsers(ctx context.Context, user models.User) ([]models.User, error) {
+	return []models.User{{ID: user.ID, Username: user.Username, Roles: []string{string(models.RolePlatformAdmin)}}}, nil
+}
+
+func (s stubApp) AddAdminUser(ctx context.Context, user models.User, request models.AdminUserRoleMutation) (models.User, error) {
+	return models.User{ID: 99, Username: request.Identifier, Roles: []string{string(models.RolePlatformAdmin)}}, nil
+}
+
+func (s stubApp) DeleteAdminUser(ctx context.Context, user models.User, userID int64) error {
+	return nil
+}
+
 func (s stubApp) ListAdminCLIs(ctx context.Context, user models.User) ([]models.CLI, error) {
 	return []models.CLI{}, nil
 }

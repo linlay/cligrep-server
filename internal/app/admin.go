@@ -70,6 +70,30 @@ func (a *App) ListAdminCLIs(ctx context.Context, user models.User) ([]models.CLI
 	return a.store.ListAdminCLIs(ctx, user)
 }
 
+func (a *App) ListAdminUsers(ctx context.Context, user models.User) ([]models.User, error) {
+	if !canAccessAdmin(user) {
+		return nil, models.ErrForbidden
+	}
+	return a.store.ListPlatformAdmins(ctx)
+}
+
+func (a *App) AddAdminUser(ctx context.Context, user models.User, request models.AdminUserRoleMutation) (models.User, error) {
+	if !canAccessAdmin(user) {
+		return models.User{}, models.ErrForbidden
+	}
+	return a.store.GrantPlatformAdmin(ctx, request.Identifier)
+}
+
+func (a *App) DeleteAdminUser(ctx context.Context, user models.User, userID int64) error {
+	if !canAccessAdmin(user) {
+		return models.ErrForbidden
+	}
+	if user.ID == userID {
+		return models.ErrForbidden
+	}
+	return a.store.RevokePlatformAdmin(ctx, userID)
+}
+
 func (a *App) GetAdminCLI(ctx context.Context, user models.User, slug string) (map[string]any, error) {
 	if !canAccessAdmin(user) {
 		return nil, models.ErrForbidden
@@ -384,7 +408,7 @@ func ensureCLIManageAccess(user models.User, cli models.CLI) error {
 }
 
 func canAccessAdmin(user models.User) bool {
-	return user.ID > 0 && (hasRole(user, models.RoleMember) || hasRole(user, models.RolePlatformAdmin))
+	return user.ID > 0 && hasRole(user, models.RolePlatformAdmin)
 }
 
 func hasRole(user models.User, role models.Role) bool {

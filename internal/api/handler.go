@@ -56,6 +56,9 @@ type application interface {
 	ListComments(ctx context.Context, cliSlug string) ([]models.Comment, error)
 	AddComment(ctx context.Context, request models.CommentMutation) (models.Comment, error)
 	AdminMe(ctx context.Context, user models.User) models.AdminMe
+	ListAdminUsers(ctx context.Context, user models.User) ([]models.User, error)
+	AddAdminUser(ctx context.Context, user models.User, request models.AdminUserRoleMutation) (models.User, error)
+	DeleteAdminUser(ctx context.Context, user models.User, userID int64) error
 	ListAdminCLIs(ctx context.Context, user models.User) ([]models.CLI, error)
 	GetAdminCLI(ctx context.Context, user models.User, slug string) (map[string]any, error)
 	CreateAdminCLI(ctx context.Context, user models.User, request models.AdminCLIUpsertRequest) (models.CLI, error)
@@ -104,6 +107,8 @@ func (h *Handler) routes() {
 	h.mux.HandleFunc("/api/v1/favorites", h.handleFavorites)
 	h.mux.HandleFunc("/api/v1/comments", h.handleComments)
 	h.mux.HandleFunc("/api/v1/admin/me", h.handleAdminMe)
+	h.mux.HandleFunc("/api/v1/admin/users", h.handleAdminUsers)
+	h.mux.HandleFunc("/api/v1/admin/users/", h.handleAdminUserByID)
 	h.mux.HandleFunc("/api/v1/admin/clis", h.handleAdminCLIs)
 	h.mux.HandleFunc("/api/v1/admin/clis/", h.handleAdminCLIBySlug)
 }

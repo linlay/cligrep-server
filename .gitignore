@@ -3,6 +3,7 @@ package-lock.json
 .env
 logs/
 run/
+.gocache/
 
 # macOS
 .DS_Store

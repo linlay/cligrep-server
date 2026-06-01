@@ -58,6 +58,62 @@ func (h *Handler) handleAdminCLIs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *Handler) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok {
+		writeLocalizedError(w, r.Context(), http.StatusUnauthorized, models.ErrUnauthorized)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		items, err := h.app.ListAdminUsers(r.Context(), user)
+		if err != nil {
+			writeAdminError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	case http.MethodPost:
+		var request models.AdminUserRoleMutation
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeCatalogError(w, r.Context(), http.StatusBadRequest, "invalid_json_body")
+			return
+		}
+		adminUser, err := h.app.AddAdminUser(r.Context(), user, request)
+		if err != nil {
+			writeAdminError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"user": adminUser})
+	default:
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
+	}
+}
+
+func (h *Handler) handleAdminUserByID(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok {
+		writeLocalizedError(w, r.Context(), http.StatusUnauthorized, models.ErrUnauthorized)
+		return
+	}
+	if r.Method != http.MethodDelete {
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
+
+	rawID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/admin/users/"), "/")
+	userID, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil || userID <= 0 {
+		writeError(w, http.StatusBadRequest, "valid userId is required")
+		return
+	}
+	if err := h.app.DeleteAdminUser(r.Context(), user, userID); err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
 func (h *Handler) handleAdminCLIBySlug(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUserFromContext(r.Context())
 	if !ok {

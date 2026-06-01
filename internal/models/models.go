@@ -211,6 +211,10 @@ type AdminReleaseUpsertRequest struct {
 	SourceURL   string    `json:"sourceUrl"`
 }
 
+type AdminUserRoleMutation struct {
+	Identifier string `json:"identifier"`
+}
+
 type AdminMe struct {
 	User               User                `json:"user"`
 	CanAccessAdmin     bool                `json:"canAccessAdmin"`
