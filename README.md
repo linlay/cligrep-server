@@ -131,6 +131,9 @@ go run ./cmd/release-sync my-cli another-cli
 ### Admin API Key
 Admin 可在后台签发 API key，用于 CLI、脚本或自动化任务调用管理接口。使用方式见 [docs/admin-api-keys.md](docs/admin-api-keys.md)。
 
+### Admin CLI API
+CLI catalog、release 和 artifact 的管理 API 使用方式见 [docs/admin-cli-api.md](docs/admin-cli-api.md)。
+
 ## 5. 运维
 ### 常用接口
 - `GET /healthz`

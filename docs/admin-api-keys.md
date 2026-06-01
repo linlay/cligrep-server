@@ -2,6 +2,8 @@
 
 Admin API keys let scripts, CLI tools, and automation jobs call CLI Grep admin APIs without browser login.
 
+For CLI catalog CRUD, release management, and artifact upload examples, see [admin-cli-api.md](admin-cli-api.md).
+
 ## Create A Key
 
 1. Sign in to `/admin` as a platform admin.
