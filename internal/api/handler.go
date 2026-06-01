@@ -59,6 +59,10 @@ type application interface {
 	ListAdminUsers(ctx context.Context, user models.User) ([]models.User, error)
 	AddAdminUser(ctx context.Context, user models.User, request models.AdminUserRoleMutation) (models.User, error)
 	DeleteAdminUser(ctx context.Context, user models.User, userID int64) error
+	ListAdminAPIKeys(ctx context.Context, user models.User) ([]models.AdminAPIKey, error)
+	CreateAdminAPIKey(ctx context.Context, user models.User, request models.AdminAPIKeyCreateRequest) (models.AdminAPIKeyCreateResult, error)
+	RevokeAdminAPIKey(ctx context.Context, user models.User, apiKeyID int64) error
+	UserForAdminAPIKey(ctx context.Context, secret string) (models.User, error)
 	ListAdminCLIs(ctx context.Context, user models.User) ([]models.CLI, error)
 	GetAdminCLI(ctx context.Context, user models.User, slug string) (map[string]any, error)
 	CreateAdminCLI(ctx context.Context, user models.User, request models.AdminCLIUpsertRequest) (models.CLI, error)
@@ -109,6 +113,8 @@ func (h *Handler) routes() {
 	h.mux.HandleFunc("/api/v1/admin/me", h.handleAdminMe)
 	h.mux.HandleFunc("/api/v1/admin/users", h.handleAdminUsers)
 	h.mux.HandleFunc("/api/v1/admin/users/", h.handleAdminUserByID)
+	h.mux.HandleFunc("/api/v1/admin/api-keys", h.handleAdminAPIKeys)
+	h.mux.HandleFunc("/api/v1/admin/api-keys/", h.handleAdminAPIKeyByID)
 	h.mux.HandleFunc("/api/v1/admin/clis", h.handleAdminCLIs)
 	h.mux.HandleFunc("/api/v1/admin/clis/", h.handleAdminCLIBySlug)
 }
@@ -129,7 +135,7 @@ func (h *Handler) withMiddleware(next http.Handler) http.Handler {
 		}
 
 		r = r.WithContext(requestContext(r))
-		if user, err := h.lookupSessionUser(r); err == nil {
+		if user, err := h.lookupRequestUser(r); err == nil {
 			r = r.WithContext(withCurrentUser(r.Context(), user))
 		}
 
@@ -612,6 +618,25 @@ func (h *Handler) lookupSessionUser(r *http.Request) (models.User, error) {
 		return models.User{}, err
 	}
 	return h.app.SessionUser(r.Context(), cookie.Value)
+}
+
+func (h *Handler) lookupRequestUser(r *http.Request) (models.User, error) {
+	if secret := bearerToken(r.Header.Get("Authorization")); secret != "" {
+		return h.app.UserForAdminAPIKey(r.Context(), secret)
+	}
+	return h.lookupSessionUser(r)
+}
+
+func bearerToken(header string) string {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return ""
+	}
+	scheme, token, ok := strings.Cut(header, " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
 }
 
 func (h *Handler) newCookie(name, value string, maxAge time.Duration) *http.Cookie {

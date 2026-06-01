@@ -128,6 +128,9 @@ go run ./cmd/release-sync my-cli another-cli
 - 站内认证使用 Google OAuth、本地密码和 HttpOnly session。
 - 如需联调 Google 登录，`.env` 中的 `CLIGREP_AUTH_GOOGLE_REDIRECT_URL` 必须与 Google 控制台登记值完全一致。
 
+### Admin API Key
+Admin 可在后台签发 API key，用于 CLI、脚本或自动化任务调用管理接口。使用方式见 [docs/admin-api-keys.md](docs/admin-api-keys.md)。
+
 ## 5. 运维
 ### 常用接口
 - `GET /healthz`

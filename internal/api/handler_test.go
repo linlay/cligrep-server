@@ -162,6 +162,25 @@ func (s stubApp) DeleteAdminUser(ctx context.Context, user models.User, userID i
 	return nil
 }
 
+func (s stubApp) ListAdminAPIKeys(ctx context.Context, user models.User) ([]models.AdminAPIKey, error) {
+	return []models.AdminAPIKey{}, nil
+}
+
+func (s stubApp) CreateAdminAPIKey(ctx context.Context, user models.User, request models.AdminAPIKeyCreateRequest) (models.AdminAPIKeyCreateResult, error) {
+	return models.AdminAPIKeyCreateResult{APIKey: models.AdminAPIKey{ID: 1, Name: request.Name}, Secret: "cg_admin_test"}, nil
+}
+
+func (s stubApp) RevokeAdminAPIKey(ctx context.Context, user models.User, apiKeyID int64) error {
+	return nil
+}
+
+func (s stubApp) UserForAdminAPIKey(ctx context.Context, secret string) (models.User, error) {
+	if secret == "cg_admin_test" {
+		return models.User{ID: 99, Username: "api-key", Roles: []string{string(models.RolePlatformAdmin)}}, nil
+	}
+	return models.User{}, models.ErrUnauthorized
+}
+
 func (s stubApp) ListAdminCLIs(ctx context.Context, user models.User) ([]models.CLI, error) {
 	return []models.CLI{}, nil
 }
@@ -331,6 +350,39 @@ func TestHandleMeReturnsSessionUser(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestAdminMeAcceptsBearerAPIKey(t *testing.T) {
+	handler := NewHandler(&stubApp{}, testConfig())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/me", nil)
+	req.Header.Set("Authorization", "Bearer cg_admin_test")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestCreateAdminAPIKeyReturnsSecret(t *testing.T) {
+	handler := NewHandler(&stubApp{
+		sessionUser: models.User{ID: 42, Username: "alice", Roles: []string{string(models.RolePlatformAdmin)}},
+	}, testConfig())
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/api-keys", strings.NewReader(`{"name":"release bot"}`))
+	req.AddCookie(&http.Cookie{Name: "cligrep_session", Value: "token"})
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"secret":"cg_admin_test"`) {
+		t.Fatalf("expected secret in response, got %s", rec.Body.String())
 	}
 }
 

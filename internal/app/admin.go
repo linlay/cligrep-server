@@ -94,6 +94,31 @@ func (a *App) DeleteAdminUser(ctx context.Context, user models.User, userID int6
 	return a.store.RevokePlatformAdmin(ctx, userID)
 }
 
+func (a *App) ListAdminAPIKeys(ctx context.Context, user models.User) ([]models.AdminAPIKey, error) {
+	if !canAccessAdmin(user) {
+		return nil, models.ErrForbidden
+	}
+	return a.store.ListAdminAPIKeys(ctx)
+}
+
+func (a *App) CreateAdminAPIKey(ctx context.Context, user models.User, request models.AdminAPIKeyCreateRequest) (models.AdminAPIKeyCreateResult, error) {
+	if !canAccessAdmin(user) {
+		return models.AdminAPIKeyCreateResult{}, models.ErrForbidden
+	}
+	return a.store.CreateAdminAPIKey(ctx, request.Name, user.ID)
+}
+
+func (a *App) RevokeAdminAPIKey(ctx context.Context, user models.User, apiKeyID int64) error {
+	if !canAccessAdmin(user) {
+		return models.ErrForbidden
+	}
+	return a.store.RevokeAdminAPIKey(ctx, apiKeyID)
+}
+
+func (a *App) UserForAdminAPIKey(ctx context.Context, secret string) (models.User, error) {
+	return a.store.UserForAdminAPIKey(ctx, secret)
+}
+
 func (a *App) GetAdminCLI(ctx context.Context, user models.User, slug string) (map[string]any, error) {
 	if !canAccessAdmin(user) {
 		return nil, models.ErrForbidden

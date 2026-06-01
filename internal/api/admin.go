@@ -114,6 +114,62 @@ func (h *Handler) handleAdminUserByID(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }
 
+func (h *Handler) handleAdminAPIKeys(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok {
+		writeLocalizedError(w, r.Context(), http.StatusUnauthorized, models.ErrUnauthorized)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		items, err := h.app.ListAdminAPIKeys(r.Context(), user)
+		if err != nil {
+			writeAdminError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	case http.MethodPost:
+		var request models.AdminAPIKeyCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			writeCatalogError(w, r.Context(), http.StatusBadRequest, "invalid_json_body")
+			return
+		}
+		result, err := h.app.CreateAdminAPIKey(r.Context(), user, request)
+		if err != nil {
+			writeAdminError(w, r, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, result)
+	default:
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
+	}
+}
+
+func (h *Handler) handleAdminAPIKeyByID(w http.ResponseWriter, r *http.Request) {
+	user, ok := currentUserFromContext(r.Context())
+	if !ok {
+		writeLocalizedError(w, r.Context(), http.StatusUnauthorized, models.ErrUnauthorized)
+		return
+	}
+	if r.Method != http.MethodDelete {
+		writeCatalogError(w, r.Context(), http.StatusMethodNotAllowed, "method_not_allowed")
+		return
+	}
+
+	rawID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/admin/api-keys/"), "/")
+	apiKeyID, err := strconv.ParseInt(rawID, 10, 64)
+	if err != nil || apiKeyID <= 0 {
+		writeError(w, http.StatusBadRequest, "valid apiKeyId is required")
+		return
+	}
+	if err := h.app.RevokeAdminAPIKey(r.Context(), user, apiKeyID); err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
 func (h *Handler) handleAdminCLIBySlug(w http.ResponseWriter, r *http.Request) {
 	user, ok := currentUserFromContext(r.Context())
 	if !ok {

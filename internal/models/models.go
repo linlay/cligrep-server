@@ -215,6 +215,25 @@ type AdminUserRoleMutation struct {
 	Identifier string `json:"identifier"`
 }
 
+type AdminAPIKey struct {
+	ID              int64      `json:"id"`
+	Name            string     `json:"name"`
+	KeyPrefix       string     `json:"keyPrefix"`
+	CreatedByUserID int64      `json:"createdByUserId"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	LastUsedAt      *time.Time `json:"lastUsedAt,omitempty"`
+	RevokedAt       *time.Time `json:"revokedAt,omitempty"`
+}
+
+type AdminAPIKeyCreateRequest struct {
+	Name string `json:"name"`
+}
+
+type AdminAPIKeyCreateResult struct {
+	APIKey AdminAPIKey `json:"apiKey"`
+	Secret string      `json:"secret"`
+}
+
 type AdminMe struct {
 	User               User                `json:"user"`
 	CanAccessAdmin     bool                `json:"canAccessAdmin"`
@@ -286,6 +305,7 @@ var (
 	ErrVersionImmutable         = errors.New("release version is immutable")
 	ErrInvalidAssetFile         = errors.New("asset file is required")
 	ErrInvalidExecutionTemplate = errors.New("invalid execution template")
+	ErrInvalidAPIKeyName        = errors.New("api key name cannot be empty")
 )
 
 type AuthFailureReason string
