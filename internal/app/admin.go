@@ -502,11 +502,7 @@ func (a *App) writeReleaseAssetFile(cli models.CLI, version, filename string, re
 }
 
 func (a *App) releaseStorageDir(cli models.CLI, version string) string {
-	cleanVersion := sanitizePathSegment(version)
-	if cli.OwnerUserID != nil && *cli.OwnerUserID > 0 {
-		return filepath.ToSlash(filepath.Join("users", fmt.Sprintf("%d", *cli.OwnerUserID), sanitizePathSegment(cli.Slug), cleanVersion))
-	}
-	return filepath.ToSlash(filepath.Join("platform", sanitizePathSegment(cli.Slug), cleanVersion))
+	return filepath.ToSlash(filepath.Join(sanitizePathSegment(cli.Slug), sanitizePathSegment(version)))
 }
 
 func sanitizeFileName(name string) string {

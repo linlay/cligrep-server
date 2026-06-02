@@ -61,3 +61,16 @@ func TestEnsureCLIManageAccessAllowsOwnerAndAdmin(t *testing.T) {
 		t.Fatal("non-owner member should be forbidden")
 	}
 }
+
+func TestReleaseStorageDirUsesSlugAndVersion(t *testing.T) {
+	ownerID := int64(440)
+	app := &App{}
+
+	if got := app.releaseStorageDir(models.CLI{Slug: "wecom-cli", OwnerUserID: &ownerID}, "v1.0.0"); got != "wecom-cli/v1.0.0" {
+		t.Fatalf("expected owner release path to use slug/version, got %q", got)
+	}
+
+	if got := app.releaseStorageDir(models.CLI{Slug: "platform-cli"}, "v1.0.0"); got != "platform-cli/v1.0.0" {
+		t.Fatalf("expected platform release path to use slug/version, got %q", got)
+	}
+}
