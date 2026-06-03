@@ -68,7 +68,7 @@ type CLIRelease struct {
 }
 
 type CLIReleaseAsset struct {
-	ID          int64  `json:"-"`
+	ID          int64  `json:"id"`
 	ReleaseID   int64  `json:"-"`
 	FileName    string `json:"fileName"`
 	DownloadURL string `json:"downloadUrl"`
